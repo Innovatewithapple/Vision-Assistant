@@ -1,9 +1,8 @@
 import cv2
-import torch
-import torchvision
+from draw_detection import draw_detection
 from detection import Detector
 
-video_path = '/Users/himanshuvyas/Downloads/vision-assistant/Video/streetvideo2.mp4'
+video_path = '/Users/himanshuvyas/Downloads/vision-assistant/Video/streetvideo2.mp4' #'/Users/himanshuvyas/Downloads/vision-assistant/Video/streetwalking.mp4' #
 
 
 #---------Capturing Start--------!
@@ -11,12 +10,12 @@ cap = cv2.VideoCapture(video_path) # create video capture object
 detector = Detector()
 
 frame_count = 0
-detection_interval = 10
+detection_interval = 12
 
 boxes = []
 labels=[]
 scores=[]
-class_names = detector.class_names
+class_names = ''
 
 while True:
     ret,frame = cap.read() # ret is boolean value to get if frame captured or not and frame is getting numpy values of video for each frame
@@ -28,23 +27,16 @@ while True:
 
     if frame_count % detection_interval == 1:
         boxes,labels,scores,class_names = detector.detect(frame=frame)
+    
 
     for box,label,score in zip(boxes,labels,scores):
         if score < 0.5:
             continue
 
         x1,y1,x2,y2 = box.int().tolist()
+        class_name = class_names[int(label)]
 
-        #Draw Rectangle
-        cv2.rectangle(img=frame,pt1=(x1,y1),pt2=(x2,y2),color=(0,255,0),thickness=1)
-
-        #Here one important note. When we draw a rectangle, that doesnt mean we are putting rectangle on top of frames. We just changes pixels colors to whatever we want our rectangular boder
-        #..so the pixel values changed and show rectangular shape
-
-        #Draw Text
-        class_name = class_names[label.item()]
-        text = f"{class_name}: {score.item():.2f}"
-        cv2.putText(img=frame,text=text,org=(x1,y1-10),fontFace=cv2.FONT_HERSHEY_SCRIPT_SIMPLEX,fontScale=1,color=(0,255,0),thickness=1)
+        frame = draw_detection(frame=frame,box=(x1, y1, x2, y2),class_name=class_name,score=float(score))
 
         cv2.imshow("Street Video",frame)
 
