@@ -3,13 +3,20 @@ import torch
 import torchvision
 from detection import Detector
 
-video_path = '/Users/himanshuvyas/Downloads/vision-assistant/Video/streetwalking.mp4'
-device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
-print("Using device:", device)
+video_path = '/Users/himanshuvyas/Downloads/vision-assistant/Video/streetvideo2.mp4'
+
 
 #---------Capturing Start--------!
 cap = cv2.VideoCapture(video_path) # create video capture object
 detector = Detector()
+
+frame_count = 0
+detection_interval = 10
+
+boxes = []
+labels=[]
+scores=[]
+class_names = detector.class_names
 
 while True:
     ret,frame = cap.read() # ret is boolean value to get if frame captured or not and frame is getting numpy values of video for each frame
@@ -17,7 +24,10 @@ while True:
     if not ret:
         break
 
-    boxes,labels,scores,class_names = detector.detect(frame=frame)
+    frame_count += 1
+
+    if frame_count % detection_interval == 1:
+        boxes,labels,scores,class_names = detector.detect(frame=frame)
 
     for box,label,score in zip(boxes,labels,scores):
         if score < 0.5:
@@ -26,7 +36,7 @@ while True:
         x1,y1,x2,y2 = box.int().tolist()
 
         #Draw Rectangle
-        cv2.rectangle(img=frame,pt1=(x1,y1),pt2=(x2,y2),color=(0,255,0),thickness=2)
+        cv2.rectangle(img=frame,pt1=(x1,y1),pt2=(x2,y2),color=(0,255,0),thickness=1)
 
         #Here one important note. When we draw a rectangle, that doesnt mean we are putting rectangle on top of frames. We just changes pixels colors to whatever we want our rectangular boder
         #..so the pixel values changed and show rectangular shape
@@ -34,7 +44,7 @@ while True:
         #Draw Text
         class_name = class_names[label.item()]
         text = f"{class_name}: {score.item():.2f}"
-        cv2.putText(img=frame,text=text,org=(x1,y1-10),fontFace=cv2.FONT_HERSHEY_SCRIPT_SIMPLEX,fontScale=1,color=(0,255,0),thickness=3)
+        cv2.putText(img=frame,text=text,org=(x1,y1-10),fontFace=cv2.FONT_HERSHEY_SCRIPT_SIMPLEX,fontScale=1,color=(0,255,0),thickness=1)
 
         cv2.imshow("Street Video",frame)
 

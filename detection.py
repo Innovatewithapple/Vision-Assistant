@@ -5,7 +5,10 @@ import torchvision
 class Detector:
     def __init__(self):
         weights = torchvision.models.detection.FasterRCNN_ResNet50_FPN_Weights.DEFAULT
-        self.model = torchvision.models.detection.fasterrcnn_resnet50_fpn(weights)
+        self.device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
+        print("Using device:", self.device)
+        self.model = torchvision.models.detection.fasterrcnn_resnet50_fpn(weights,pretrained=True,rpn_post_nms_top_n_test=150,box_detections_per_img=10)
+        # self.model = self.model.to(self.device)
 
         self.model.eval()
         self.class_names = weights.meta['categories']
@@ -22,6 +25,7 @@ class Detector:
         #BGR->RGB
         frame_rgb = cv2.cvtColor(resized_frame,cv2.COLOR_BGR2RGB)
         image_tensor = torch.from_numpy(frame_rgb).permute(2,0,1).float() / 255.0
+        # image_tensor = image_tensor.to(self.device)
 
         with torch.no_grad():
             predicton = self.model([image_tensor])[0]
