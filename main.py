@@ -1,21 +1,31 @@
 import cv2
 from draw_detection import draw_detection
 from detection import Detector
+from segmentation import Segmentation
+import numpy as np
 
-video_path = '/Users/himanshuvyas/Downloads/vision-assistant/Video/streetvideo2.mp4' #'/Users/himanshuvyas/Downloads/vision-assistant/Video/streetwalking.mp4' #
+video_path = '/Users/himanshuvyas/Downloads/vision-assistant/Video/streetwalkinghd.mp4' #'/Users/himanshuvyas/Downloads/vision-assistant/Video/streetwalking.mp4' #
 
+#Different colors for different instances
+colors = [
+    (77, 255, 77),       # Soft Green
+    (180, 120, 255),     # Soft Purple
+    (255, 100, 100),     # Soft Red
+    (100, 180, 255),     # Soft Sky Blue
+    (255, 220, 100),     # Soft Yellow
+    (100, 255, 220),     # Soft Teal
+    (255, 160, 100),     # Soft Orange
+    (255, 120, 200),     # Soft Pink
+    (180, 255, 100),     # Soft Lime
+    (100, 255, 255),     # Soft Cyan
+    (255, 140, 140),     # Soft Coral
+    (200, 160, 255),     # Soft Violet
+]
 
 #---------Capturing Start--------!
 cap = cv2.VideoCapture(video_path) # create video capture object
-detector = Detector()
-
-frame_count = 0
-detection_interval = 12
-
-boxes = []
-labels=[]
-scores=[]
-class_names = ''
+# detector = Detector()
+segmentor = Segmentation()
 
 while True:
     ret,frame = cap.read() # ret is boolean value to get if frame captured or not and frame is getting numpy values of video for each frame
@@ -23,25 +33,71 @@ while True:
     if not ret:
         break
 
-    frame_count += 1
+    boxes,labels,scores,masks,track_ids,class_names = segmentor.segment(frame=frame)
 
-    if frame_count % detection_interval == 1:
-        boxes,labels,scores,class_names = detector.detect(frame=frame)
+    #create the seperate object for the mask
+    overlay = frame.copy()
+
+    if masks is not None and track_ids is not None:
+        polygons = masks.xy
+        for polygon,label,score,track_id in zip(polygons,labels,scores,track_ids):
+            if score < 0.4:
+                continue
+
+
+            # convert polygen coordinates to pixel coordinates
+            polygon = polygon.astype(np.int32)
+
+            track_id = int(track_id)
+
+            #select color for the instance
+            color = colors[track_id % len(colors)]
+
+            # Fill the mask on the overlay
+            cv2.fillPoly(overlay,[polygon],color)
+
+            #Draw the mask boundary on the overlay
+            # cv2.polylines(overlay,[polygon],isClosed=True,color=color,thickness=1)
+
+    #Blend original frame with mask overlay
+    alpha = 0.35
+
+    frame = cv2.addWeighted(frame,1 - alpha,overlay,alpha,0)
+
+    if masks is not None and track_ids is not None:
+            polygons = masks.xy
+            for polygon,label,score,track_id in zip(polygons,labels,scores,track_ids):
+                if score < 0.4:
+                    continue
+    
+    
+                # convert polygen coordinates to pixel coordinates
+                polygon = polygon.astype(np.int32)
+    
+                track_id = int(track_id)
+    
+                #select color for the instance
+                color = colors[track_id % len(colors)]
+                #Draw the mask boundary on the overlay
+                cv2.polylines(frame,[polygon],isClosed=True,color=color,thickness=1,lineType=cv2.LINE_AA)   
+
+
     
 
-    for box,label,score in zip(boxes,labels,scores):
-        if score < 0.5:
-            continue
 
-        x1,y1,x2,y2 = box.int().tolist()
-        class_name = class_names[int(label)]
+    # for box,label,score in zip(boxes,labels,scores):
+    #     if score < 0.5:
+    #         continue
 
-        frame = draw_detection(frame=frame,box=(x1, y1, x2, y2),class_name=class_name,score=float(score))
+    #     x1,y1,x2,y2 = box.int().tolist()
+    #     class_name = class_names[int(label)]
 
-        cv2.imshow("Street Video",frame)
+    #     frame = draw_detection(frame=frame,box=(x1, y1, x2, y2),class_name=class_name,score=float(score))
 
-        if cv2.waitKey(1) & 0xFF == ord("q"):
-            break
+    cv2.imshow("Street Video",frame)
+
+    if cv2.waitKey(1) & 0xFF == ord("q"):
+        break
 
 cap.release()
 cv2.destroyAllWindows()

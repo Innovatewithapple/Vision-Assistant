@@ -7,7 +7,7 @@ class Detector:
 
     def __init__(self):
 
-        self.model = YOLO("yolov8n.pt")
+        self.model = YOLO("yolo26n.pt")
 
     def detect(self, frame):
 
