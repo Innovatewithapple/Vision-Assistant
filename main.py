@@ -24,7 +24,6 @@ colors = [
 
 #---------Capturing Start--------!
 cap = cv2.VideoCapture(video_path) # create video capture object
-# detector = Detector()
 segmentor = Segmentation()
 
 while True:
@@ -44,7 +43,6 @@ while True:
             if score < 0.4:
                 continue
 
-
             # convert polygen coordinates to pixel coordinates
             polygon = polygon.astype(np.int32)
 
@@ -56,11 +54,8 @@ while True:
             # Fill the mask on the overlay
             cv2.fillPoly(overlay,[polygon],color)
 
-            #Draw the mask boundary on the overlay
-            # cv2.polylines(overlay,[polygon],isClosed=True,color=color,thickness=1)
-
     #Blend original frame with mask overlay
-    alpha = 0.35
+    alpha = 0.27
 
     frame = cv2.addWeighted(frame,1 - alpha,overlay,alpha,0)
 
@@ -70,7 +65,6 @@ while True:
                 if score < 0.4:
                     continue
     
-    
                 # convert polygen coordinates to pixel coordinates
                 polygon = polygon.astype(np.int32)
     
@@ -79,20 +73,7 @@ while True:
                 #select color for the instance
                 color = colors[track_id % len(colors)]
                 #Draw the mask boundary on the overlay
-                cv2.polylines(frame,[polygon],isClosed=True,color=color,thickness=1,lineType=cv2.LINE_AA)   
-
-
-    
-
-
-    # for box,label,score in zip(boxes,labels,scores):
-    #     if score < 0.5:
-    #         continue
-
-    #     x1,y1,x2,y2 = box.int().tolist()
-    #     class_name = class_names[int(label)]
-
-    #     frame = draw_detection(frame=frame,box=(x1, y1, x2, y2),class_name=class_name,score=float(score))
+                cv2.polylines(frame,[polygon],isClosed=True,color=color,thickness=1,lineType=cv2.LINE_AA)
 
     cv2.imshow("Street Video",frame)
 
