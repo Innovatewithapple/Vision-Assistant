@@ -16,3 +16,20 @@ class Segmentation:
         class_names = labels.names
 
         return boxes,labels,scores,mask,track_ids,class_names
+
+
+#Different colors for different instances
+colors = [
+    (77, 255, 77),       # Soft Green
+    (180, 120, 255),     # Soft Purple
+    (255, 100, 100),     # Soft Red
+    (100, 180, 255),     # Soft Sky Blue
+    (255, 220, 100),     # Soft Yellow
+    (100, 255, 220),     # Soft Teal
+    (255, 160, 100),     # Soft Orange
+    (255, 120, 200),     # Soft Pink
+    (180, 255, 100),     # Soft Lime
+    (100, 255, 255),     # Soft Cyan
+    (255, 140, 140),     # Soft Coral
+    (200, 160, 255),     # Soft Violet
+]
