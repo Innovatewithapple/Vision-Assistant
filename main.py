@@ -13,8 +13,8 @@ import mujoco
 from Scenes.two_person_scene import xml
 
 # 1. Image dimensions (1280x1920)
-image_width = 720
-image_height = 1280
+image_width = 1280
+image_height = 720
 
 # Automatically find centers and dynamic vertical focal scale
 center_y = image_height / 2.0
@@ -28,42 +28,42 @@ distance_estimator = DistanceEstimator(cam_height_meters=1.45, tilt_angle_degree
 video_path = 'Video/streetwalkinghd.mp4' #'/Users/himanshuvyas/Downloads/vision-assistant/Video/streetwalking.mp4' #
 
 #---------Capturing Start--------!
-cap = cv2.VideoCapture(video_path) # create video capture object
+# cap = cv2.VideoCapture(video_path) # create video capture object
 
 
-# model = mujoco.MjModel.from_xml_string(xml)
-# data = mujoco.MjData(model)
-# renderer = mujoco.Renderer(model=model,height=image_height,width=image_width)
+model = mujoco.MjModel.from_xml_string(xml)
+data = mujoco.MjData(model)
+renderer = mujoco.Renderer(model=model,height=image_height,width=image_width)
 
 pose_estimator = PoseEstimator()
 segmentor = Segmentation()
 
 while True:
-    ret,frame = cap.read() # ret is boolean value to get if frame captured or not and frame is getting numpy values of video for each frame
+    # ret,frame = cap.read() # ret is boolean value to get if frame captured or not and frame is getting numpy values of video for each frame
 
-    if not ret:
-        break
+    # if not ret:
+    #     break
 
     # ---------------------------------------------
     # MuJoCo updates the scene
     # ---------------------------------------------
 
-    # mujoco.mj_forward(model, data)
+    mujoco.mj_forward(model, data)
 
-    # renderer.update_scene(data,camera="main_camera")
+    renderer.update_scene(data,camera="main_camera")
 
     # ---------------------------------------------
     # Render camera image
     # ---------------------------------------------
 
-    # frame = renderer.render()
+    frame = renderer.render()
 
-    # frame = np.asarray(frame)
+    frame = np.asarray(frame)
 
-    # # MuJoCo → RGB
-    # # OpenCV → BGR
+    # MuJoCo → RGB
+    # OpenCV → BGR
 
-    # frame = cv2.cvtColor(frame,cv2.COLOR_RGB2BGR)
+    frame = cv2.cvtColor(frame,cv2.COLOR_RGB2BGR)
 
     # result = pose_estimator.estimator(frame=frame)
     boxes,labels,scores,masks,track_ids,class_names = segmentor.segment(frame=frame)
@@ -114,9 +114,8 @@ while True:
         true_diagonal_distance = round(true_diagonal_distance, 2)
         distance_inmeter = f"{true_diagonal_distance} meters"
 
-        if id == 5.0:
-            print(f"Distance to Person: {true_diagonal_distance} meters | Id: {id}")
-            frame = draw_detection(frame=frame,box=(x1, y1, x2, y2),class_name=distance_inmeter,score=float(score))
+        print(f"Distance to Person: {true_diagonal_distance} meters | Id: {id}")
+        frame = draw_detection(frame=frame,box=(x1, y1, x2, y2),class_name=distance_inmeter,score=float(score))
 
 
     cv2.imshow("Street Video",frame)

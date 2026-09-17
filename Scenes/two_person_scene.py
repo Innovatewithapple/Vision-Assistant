@@ -90,6 +90,22 @@ xml = f"""
             />
         </body>
 
+        <!-- Person3: 5 meters away, on the LEFT -->
+        <body
+            name="human_3"
+            pos="-2 -3 0.011"
+            euler="0 0 -90"
+        >
+            <geom
+                type="mesh"
+                mesh="human"
+                material="human_material"
+                euler="90 0 0"
+                contype="0"
+                conaffinity="0"
+            />
+        </body>
+
         <camera
             name="main_camera"
             pos="0 -8 1.45"
