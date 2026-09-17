@@ -13,7 +13,7 @@ class Segmentation:
         scores = result.boxes.conf
         mask = result.masks
         track_ids = result.boxes.id
-        class_names = labels.names
+        class_names = result.names
 
         return boxes,labels,scores,mask,track_ids,class_names
 
