@@ -1,47 +1,34 @@
-import trimesh
 from pathlib import Path
+import numpy as np
 
+BOTTLE_OBJ = Path("bottle/14042_750_mL_Wine_Bottle_r_v1_L3.obj")
 
-obj_file = Path("human/rp_dennis_posed_004_30k.OBJ")
+vertices = []
 
+with open(BOTTLE_OBJ, "r") as f:
+    for line in f:
+        if line.startswith("v "):
+            _, x, y, z = line.split()
+            vertices.append([float(x), float(y), float(z)])
 
-mesh = trimesh.load(
-    obj_file,
-    force="mesh"
-)
+vertices = np.array(vertices)
 
+obj_min = vertices.min(axis=0)
+obj_max = vertices.max(axis=0)
 
-print("Loaded successfully!")
-print()
+raw_dimensions = obj_max - obj_min
 
-print("Vertices:", len(mesh.vertices))
-print("Faces:", len(mesh.faces))
-print()
+print("RAW OBJ:")
+print("Min:", obj_min)
+print("Max:", obj_max)
+print("Dimensions:", raw_dimensions)
 
-print("Minimum XYZ:")
-print(mesh.bounds[0])
+# XML scale = 0.1 0.1 0.1
+scale = np.array([0.1, 0.1, 0.1])
 
-print()
+scaled_dimensions = raw_dimensions * scale
 
-print("Maximum XYZ:")
-print(mesh.bounds[1])
-
-print()
-
-print("Dimensions XYZ:")
-print(mesh.extents)
-
-print()
-
-print("Has vertex normals:")
-print(mesh.vertex_normals is not None)
-
-print()
-
-print("Has UV coordinates:")
-
-if mesh.visual.uv is not None:
-    print(True)
-    print("UV shape:", mesh.visual.uv.shape)
-else:
-    print(False)
+print("\nAFTER XML SCALE:")
+print(f"Width  : {scaled_dimensions[0]:.4f} m")
+print(f"Depth  : {scaled_dimensions[1]:.4f} m")
+print(f"Height : {scaled_dimensions[2]:.4f} m")
