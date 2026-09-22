@@ -10,27 +10,51 @@ from Calculation.DistanceEstiamtor import DistanceEstimator
 import math
 import mujoco
 # from Scenes.single_person_scene import xml
-from Scenes.two_person_scene import xml
+# from Scenes.two_person_scene import xml
+from Scenes.threemug_on_table_scene import xml
+from camera_utils import get_camera_parameters
 
-# 1. Image dimensions (1280x1920)
+# ============================================================
+# IMAGE & SCENE SETUP
+# ============================================================
 image_width = 1280
 image_height = 720
 
-# Automatically find centers and dynamic vertical focal scale
 center_y = image_height / 2.0
 center_x = image_width / 2.0
 
-vertical_fov_degrees = 60.0
+# Compile your MuJoCo model structure locally
+model = mujoco.MjModel.from_xml_string(xml)
+
+# ============================================================
+# DYNAMIC AUTOMATED INITIALIZATION
+# ============================================================
+# Call your helper module function directly using the local model memory structure
+cam_params = get_camera_parameters(model, camera_name="main_camera", target_body_name="camera_target")
+
+# Calculate pixel focal scale dynamically using the extracted FOV parameter
+vertical_fov_degrees = cam_params["fovy_degrees"]
 focal_length = center_y / math.tan(math.radians(vertical_fov_degrees / 2.0))
 
-distance_estimator = DistanceEstimator(cam_height_meters=1.45, tilt_angle_degrees=0.0, focal_length_pixels=focal_length, optical_center_y=center_y)
+# Initialize the estimator class dynamically using the auto-extracted values
+distance_estimator = DistanceEstimator(
+    cam_height_meters=cam_params["camera_height"], 
+    tilt_angle_degrees=cam_params["tilt_angle_degrees"], 
+    focal_length_pixels=focal_length, 
+    optical_center_y=center_y
+)
+
+# Print validation checks to the console logs
+print("\n--- Pipeline Parameter Initialized Completely Automatically ---")
+print(f"Height Applied: {cam_params['camera_height']} m")
+print(f"FOV Applied:    {cam_params['fovy_degrees']}°")
+print(f"Tilt Applied:   {cam_params['tilt_angle_degrees']}°")
+print(f"Focal Length:   {round(focal_length, 2)} pixels")
+print("----------------------------------------------------------------\n")
 
 video_path = 'Video/streetwalkinghd.mp4' #'/Users/himanshuvyas/Downloads/vision-assistant/Video/streetwalking.mp4' #
 
 #---------Capturing Start--------!
-# cap = cv2.VideoCapture(video_path) # create video capture object
-
-
 model = mujoco.MjModel.from_xml_string(xml)
 data = mujoco.MjData(model)
 renderer = mujoco.Renderer(model=model,height=image_height,width=image_width)
@@ -39,71 +63,33 @@ pose_estimator = PoseEstimator()
 segmentor = Segmentation()
 
 while True:
-    # ret,frame = cap.read() # ret is boolean value to get if frame captured or not and frame is getting numpy values of video for each frame
-
-    # if not ret:
-    #     break
-
     # ---------------------------------------------
     # MuJoCo updates the scene
     # ---------------------------------------------
-
     mujoco.mj_forward(model, data)
-
     renderer.update_scene(data,camera="main_camera")
 
     # ---------------------------------------------
     # Render camera image
     # ---------------------------------------------
-
     frame = renderer.render()
-
     frame = np.asarray(frame)
 
     # MuJoCo → RGB
     # OpenCV → BGR
 
     frame = cv2.cvtColor(frame,cv2.COLOR_RGB2BGR)
-
-    # result = pose_estimator.estimator(frame=frame)
     boxes,labels,scores,masks,track_ids,class_names = segmentor.segment(frame=frame)
-    # frame = result.plot()
+    print("boxes:", len(boxes))
+    print("track_ids:", track_ids)
 
-    for box, label, score, id in zip(boxes, labels, scores, track_ids):
-
-        if score < 0.5:
+    for box, label, score in zip(boxes, labels, scores):
+        if score < 0.1:
             continue
 
         x1, y1, x2, y2 = box.int().tolist()
-
         class_name = class_names[int(label)]
 
-        # ======================================================================
-        # PIPELINE UPGRADE: 1D DEPTH TO TRUE 2D DIAGONAL DISTANCE
-        # ======================================================================
-        """
-        WHY WE ADDED THESE 4 LINES:
-        1. Forward Depth vs. Diagonal Distance:
-           - Our 'get_distance_to_base()' function only reads vertical pixel rows (y2). 
-           - It calculates 'Perpendicular Forward Depth' (how far down the street plane 
-             an object is). For Person 1 (centered), depth equals straight-line distance.
-           - For Person 2 (standing to the left), forward depth is 7.00m, but the true 
-             diagonal hypotenuse distance to their feet is 7.28m.
-        
-        2. How the Math Automates This:
-           - Line A: Finds the bounding box center X pixel and measures its horizontal 
-             deviation from the camera's center line (center_x).
-           - Line B: Converts that horizontal pixel displacement into real-world meters.
-           - Line C & D: Uses the Pythagorean Theorem (Hypotenuse = sqrt(X^2 + Z^2)) to 
-             find the true straight-line diagonal distance from you to them.
-        
-        3. Understanding the 7cm Variance (7.35m vs 7.28m):
-           - Do not remove the vertical '-5' offset! The '-5' keeps your depth accurate.
-           - The tiny 7cm difference is horizontal noise caused by bounding box thickness 
-             (2 pixels wide) and the person's physical posture (arms/clothing width). 
-           - This minor shift changes the box center by 3 pixels, which is completely 
-             normal, expected, and safe for a real-time computer vision pipeline.
-        """
         calibrated_y2 = y2 - 5
         distance = distance_estimator.get_distance_to_base(calibrated_y2)
         bbox_center_x = (x1 + x2) / 2.0
@@ -114,7 +100,7 @@ while True:
         true_diagonal_distance = round(true_diagonal_distance, 2)
         distance_inmeter = f"{true_diagonal_distance} meters"
 
-        print(f"Distance to Person: {true_diagonal_distance} meters | Id: {id}")
+        print(f"Distance to Person: {true_diagonal_distance} meters | Id: {id} | Score: {score}")
         frame = draw_detection(frame=frame,box=(x1, y1, x2, y2),class_name=distance_inmeter,score=float(score))
 
 
@@ -124,3 +110,4 @@ while True:
 
 # cap.release()
 cv2.destroyAllWindows()
+
