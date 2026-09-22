@@ -59,7 +59,7 @@ model = mujoco.MjModel.from_xml_string(xml)
 data = mujoco.MjData(model)
 renderer = mujoco.Renderer(model=model,height=image_height,width=image_width)
 
-pose_estimator = PoseEstimator()
+# pose_estimator = PoseEstimator()
 segmentor = Segmentation()
 
 while True:
@@ -83,26 +83,56 @@ while True:
     print("boxes:", len(boxes))
     print("track_ids:", track_ids)
 
-    for box, label, score in zip(boxes, labels, scores):
-        if score < 0.1:
-            continue
+    overlay = frame.copy()
 
-        x1, y1, x2, y2 = box.int().tolist()
-        class_name = class_names[int(label)]
+    if masks is not None and track_ids is not None:
+        polygons = masks.xy
+        for polygon,box, label, score, track_id in zip(polygons,boxes, labels, scores,track_ids):
+            if score < 0.1:
+                continue
 
-        calibrated_y2 = y2 - 5
-        distance = distance_estimator.get_distance_to_base(calibrated_y2)
-        bbox_center_x = (x1 + x2) / 2.0
-        horizontal_meters = ((bbox_center_x - center_x) * distance) / focal_length
+            # convert polygen coordinates to pixel coordinates
+            polygon = polygon.astype(np.int32)
 
-        # Step C: Compute the true straight-line diagonal distance (Hypotenuse)
-        true_diagonal_distance = math.sqrt(horizontal_meters**2 + distance**2)
-        true_diagonal_distance = round(true_diagonal_distance, 2)
-        distance_inmeter = f"{true_diagonal_distance} meters"
+            track_id = int(track_id)
+            color = colors[track_id % len(colors)]
 
-        print(f"Distance to Person: {true_diagonal_distance} meters | Id: {id} | Score: {score}")
-        frame = draw_detection(frame=frame,box=(x1, y1, x2, y2),class_name=distance_inmeter,score=float(score))
+            # Fill the mask on the overlay
+            cv2.fillPoly(overlay,[polygon],color)
 
+            x1, y1, x2, y2 = box.int().tolist()
+            class_name = class_names[int(label)]
+
+            calibrated_y2 = y2 - 5
+            distance = distance_estimator.get_distance_to_base(calibrated_y2)
+            bbox_center_x = (x1 + x2) / 2.0
+            horizontal_meters = ((bbox_center_x - center_x) * distance) / focal_length
+
+            # Step C: Compute the true straight-line diagonal distance (Hypotenuse)
+            true_diagonal_distance = math.sqrt(horizontal_meters**2 + distance**2)
+            true_diagonal_distance = round(true_diagonal_distance, 2)
+            distance_inmeter = f"{true_diagonal_distance} meters"
+
+            print(f"Distance to Person: {true_diagonal_distance} meters | Id: {track_id} | Score: {score}")
+            #frame = draw_detection(frame=frame,box=(x1, y1, x2, y2),class_name=distance_inmeter,score=float(score))
+    alpha = 0.27
+
+    frame = cv2.addWeighted(frame,1 - alpha,overlay,alpha,0)
+    if masks is not None and track_ids is not None:
+        polygons = masks.xy
+        for polygon,label,score,track_id in zip(polygons,labels,scores,track_ids):
+            if score < 0.4:
+                continue
+    
+            # convert polygen coordinates to pixel coordinates
+            polygon = polygon.astype(np.int32)
+    
+            track_id = int(track_id)
+    
+            #select color for the instance
+            color = colors[track_id % len(colors)]
+            #Draw the mask boundary on the overlay
+            cv2.polylines(frame,[polygon],isClosed=True,color=color,thickness=1,lineType=cv2.LINE_AA)
 
     cv2.imshow("Street Video",frame)
     if cv2.waitKey(1) & 0xFF == ord("q"):

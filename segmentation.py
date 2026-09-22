@@ -5,7 +5,7 @@ class Segmentation:
         self.model = YOLO("yolo26n-seg.pt")
 
     def segment(self,frame):
-        results = self.model.track(frame,persist=True,verbose=False,device='mps')
+        results = self.model.track(frame,persist=True,tracker="bytetrack.yaml",verbose=False,device='mps')
         result = results[0]
 
         boxes = result.boxes.xyxy
