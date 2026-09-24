@@ -1,7 +1,7 @@
 import cv2
 
-from segmentation import Segmentation
-from draw_detection import draw_detection
+from YOLO.segmentation import Segmentation
+from YOLO.draw_detection import draw_detection
 
 
 # ============================================================

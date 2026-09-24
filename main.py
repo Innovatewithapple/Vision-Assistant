@@ -2,10 +2,10 @@ from ast import mod
 import cv2
 import mujoco.renderer
 from polars import col
-from draw_detection import draw_detection
-from detection import Detector
-from segmentation import Segmentation,colors
-from pose import PoseEstimator
+from YOLO.draw_detection import draw_detection
+from YOLO.detection import Detector
+from YOLO.segmentation import Segmentation,colors
+from YOLO.pose import PoseEstimator
 import numpy as np
 from Calculation.DistanceEstiamtor import DistanceEstimator
 import math
@@ -14,7 +14,7 @@ import mujoco
 # from Scenes.two_person_scene import xml
 # from Scenes.threemug_on_table_scene import xml
 from Scenes.mug_on_table_scene import xml
-from camera_utils import get_camera_parameters
+from Calculation.camera_utils import get_camera_parameters
 from Calculation.GroundTruthValidator import GroundTruthValidator
 
 
