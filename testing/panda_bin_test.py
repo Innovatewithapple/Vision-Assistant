@@ -66,7 +66,18 @@ data.qpos[joint4_qpos] = -1.8 # radians
 
 mujoco.mj_forward(model, data)
 
+bottle_4_id = mujoco.mj_name2id(
+    model,
+    mujoco.mjtObj.mjOBJ_BODY,
+    "bottle_4"
+)
 
+print("\n==============================")
+print("BOTTLE 4 POSITION")
+print("==============================")
+print("Bottle 4 world position:")
+print(data.xpos[bottle_4_id])
+print("==============================")
 
 
 #--------MODEL INFORMATION---------!
@@ -301,11 +312,7 @@ starting_qpos = data.qpos[:7].copy()
 
 # Position above the bottle
 
-approach_position = np.array([
-    0.50,
-    0.00,
-    0.40
-])
+approach_position = np.array([0.30, -0.15, 0.70])
 
 
 # ============================================================
@@ -313,12 +320,7 @@ approach_position = np.array([
 # ============================================================
 
 # Bottle center is approximately Z = 0.20 m
-
-grasp_position = np.array([
-    0.50,
-    0.00,
-    0.20
-])
+grasp_position = np.array([0.33, -0.15, 0.68])
 
 
 # ============================================================
@@ -331,14 +333,37 @@ approach_q = ik.solve(
 
 
 print("\n==============================")
-print("APPROACH IK")
+print("APPROACH IK RESULT")
 print("==============================")
 
 print("Target:")
 print(approach_position)
 
-print("\nJoint targets:")
+print("\nIK joint solution:")
 print(approach_q)
+
+print("\nLink7 position produced by IK:")
+print(
+    data.xpos[
+        ik.link7_body_id
+    ].copy()
+)
+
+print("\nIK position error:")
+print(
+    approach_position
+    - data.xpos[ik.link7_body_id]
+)
+
+print("\nIK distance:")
+print(
+    np.linalg.norm(
+        approach_position
+        - data.xpos[ik.link7_body_id]
+    )
+)
+
+print("==============================")
 
 
 # ============================================================
@@ -394,9 +419,10 @@ target_q = None
 step_count = 0
 
 max_steps = 5000
+grasp_step_count = 0
 
-target_tolerance = 0.01
-
+target_tolerance = 0.13 #0.01
+lift_position = np.array([0.33, -0.15, 0.85])
 grasp_q = None
 
 
@@ -406,7 +432,7 @@ grasp_q = None
 
 GRIPPER_OPEN = 255
 GRIPPER_CLOSE = 0
-
+gripper_commanded = False
 
 # ============================================================
 # WRIST CAMERA + OVERVIEW CAMERA LOOP
@@ -430,6 +456,8 @@ while step_count < max_steps:
     # ========================================================
 
     if phase == "open":
+        if gripper_commanded == True:
+            print("Gripper command true in open")
 
         data.ctrl[7] = GRIPPER_OPEN
 
@@ -456,19 +484,23 @@ while step_count < max_steps:
         ik.hand_body_id
     ].copy()
 
+
     current_link7_position = data.xpos[
         ik.link7_body_id
     ].copy()
+
 
     # ========================================================
     # PHASE 1 — MOVE ABOVE BOTTLE
     # ========================================================
 
     if phase == "approach":
+        if gripper_commanded == True:
+            print("Gripper command true in approach")
 
         position_error = (
             approach_position
-            - current_link7_position
+            - current_hand_position
         )
 
         distance_to_target = np.linalg.norm(
@@ -479,12 +511,44 @@ while step_count < max_steps:
         # ----------------------------------------------------
         # Reached approach position?
         # ----------------------------------------------------
-        if step_count % 100 == 0:
+
+        if step_count == 100:
+
+            print("\n==============================")
+            print("APPROACH DEBUG")
+            print("==============================")
+
+            print("Target:")
+            print(approach_position)
+
+            print("Current Link7:")
+            print(current_link7_position)
+
+            print("current_hand_position:")
+            print(current_hand_position)
+
+            print("Position error:")
+            print(position_error)
+
+            print("Distance:")
+            print(distance_to_target)
+
+            print("Tolerance:")
+            print(target_tolerance)
+
+            print("CURRENT HAND:", current_hand_position)
+            print("APPROACH TARGET:", approach_position)
             print(
-                f"APPROACH DEBUG | "
-                f"distance={distance_to_target:.6f} | "
-                f"tolerance={target_tolerance:.6f}"
+                "HAND ERROR:",
+                approach_position - current_hand_position
             )
+
+            print("==============================")
+
+
+        # ----------------------------------------------------
+        # Reached actual approach target
+        # ----------------------------------------------------
 
         if distance_to_target < target_tolerance:
 
@@ -535,28 +599,24 @@ while step_count < max_steps:
             # HAND OFFSET FROM LINK7
             # =================================================
 
-            # The Panda hand is fixed 0.107 m forward
-            # from link7 in link7's local Z direction.
             hand_offset_local = np.array([
                 0.0,
                 0.0,
                 0.107
             ])
 
+
             link7_rotation = data.xmat[
                 ik.link7_body_id
             ].reshape(3, 3).copy()
+
 
             hand_offset_world = (
                 link7_rotation
                 @ hand_offset_local
             )
 
-            # grasp_position is the position where we want
-            # the physical hand to be.
-            #
-            # PandaIK solves for link7, so convert the
-            # desired hand position into a link7 target.
+
             grasp_link7_target = (
                 grasp_position
                 - hand_offset_world
@@ -565,6 +625,9 @@ while step_count < max_steps:
 
             grasp_q = ik.solve(
                 grasp_link7_target
+            )
+            lift_q = ik.solve(
+                lift_position
             )
 
 
@@ -583,9 +646,7 @@ while step_count < max_steps:
 
 
             # ------------------------------------------------
-            # IK changed qpos.
-            #
-            # Restore the REAL current physical position.
+            # Restore REAL current physical position
             # ------------------------------------------------
 
             data.qpos[:7] = current_qpos
@@ -595,10 +656,6 @@ while step_count < max_steps:
                 data
             )
 
-
-            # ------------------------------------------------
-            # Change movement target
-            # ------------------------------------------------
 
             target_q = grasp_q
 
@@ -614,9 +671,8 @@ while step_count < max_steps:
     # ========================================================
 
     elif phase == "grasp":
+        grasp_step_count += 1
 
-        # Check the ACTUAL hand position against the
-        # desired physical grasp position.
         position_error = (
             grasp_position
             - current_hand_position
@@ -626,47 +682,129 @@ while step_count < max_steps:
             position_error
         )
 
-
-        # ----------------------------------------------------
-        # Reached grasp position?
-        # ----------------------------------------------------
-
-        if distance_to_target < target_tolerance:
+        # print(f"\nInside Grasp==")
+        # print("distance_to_target: ",distance_to_target)
+        # print("target_tolerance: ",target_tolerance)
+        if distance_to_target <= target_tolerance:
 
             print("\n==============================")
             print("GRASP POSITION REACHED")
             print("==============================")
 
+            print("\nDesired hand position:")
+            print(grasp_position)
+
+            print("\nActual hand position:")
             print(
-                "Hand position:",
-                current_hand_position
+                data.xpos[
+                    ik.hand_body_id
+                ].copy()
             )
 
+            print("\nActual link7 position:")
             print(
-                "Grasp target:",
-                grasp_position
+                data.xpos[
+                    ik.link7_body_id
+                ].copy()
             )
 
+            print("\nHand - Link7 offset:")
             print(
-                "Distance:",
-                distance_to_target
+                data.xpos[ik.hand_body_id]
+                - data.xpos[ik.link7_body_id]
             )
 
+            print("\nLink7 rotation:")
             print(
-                "\nREADY FOR GRIPPER."
+                data.xmat[
+                    ik.link7_body_id
+                ].reshape(3, 3)
             )
+            # Close gripper
+            print(f"grasp_step_count: {grasp_step_count}")
+            if grasp_step_count >= 300:
+                data.ctrl[7] = GRIPPER_CLOSE
+                print("GRIPPER CLOSING...")
+            if grasp_step_count >= 700:
+                print("lifting")
+                target_q = lift_q
 
-            break
+
+                
 
 
     # ========================================================
     # SEND CURRENT TARGET TO ARM
     # ========================================================
 
-    data.ctrl[:7] = target_q
+    mujoco.mj_forward(
+        model,
+        data
+    )
+
+    kp = model.actuator_gainprm[:7, 0]
+
+    bias_compensation = (
+        data.qfrc_bias[:7] / kp
+    )
+
+    corrected_ctrl = (
+        target_q
+        + bias_compensation
+    )
+
+    data.ctrl[:7] = corrected_ctrl
+
+
+    # ========================================================
+    # JOINT MOVEMENT DEBUG
+    # ========================================================
+
     if step_count % 100 == 0 and phase == "approach":
-        print("TARGET Q :", target_q)
-        print("CURRENT Q:", data.qpos[:7])
+
+        current_q = data.qpos[:7].copy()
+
+        joint_error = (
+            target_q
+            - current_q
+        )
+
+        print("\n==============================")
+        print("JOINT MOVEMENT DEBUG")
+        print("==============================")
+
+        print("TARGET Q:")
+        print(target_q)
+
+        print("\nCURRENT Q:")
+        print(current_q)
+
+        print("\nJOINT ERROR:")
+        print(joint_error)
+
+        print("\nQFRc BIAS:")
+        print(data.qfrc_bias[:7])
+
+        print("\nKP:")
+        print(kp)
+
+        print("\nBIAS COMPENSATION:")
+        print(bias_compensation)
+
+        print("\nCORRECTED CTRL:")
+        print(corrected_ctrl)
+
+        print("\nACTUATOR FORCE:")
+        print(data.actuator_force[:7])
+
+        print("\nQCRc ACTUATOR:")
+        print(data.qfrc_actuator[:7])
+
+        print("\nACTUATOR FORCE LIMIT:")
+        print(model.actuator_forcerange[:7])
+
+        print("==============================")
+
 
     # ========================================================
     # WRIST CAMERA
@@ -990,7 +1128,6 @@ while step_count < max_steps:
 
     if key == 27 or key == ord("q"):
         break
-
 
 # ============================================================
 # FINAL

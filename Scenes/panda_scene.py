@@ -61,8 +61,8 @@ panda_xml = panda_xml.replace(
 overview_camera = """
 <camera
     name="overview_camera"
-    pos="0.100 -1.440 1.720"
-    quat="0.944410 0.328769 0.000000 0.000000"
+    pos="1.500 0.000 1.000"
+    quat="0.500000 0.500000 0.500000 0.500000"
     fovy="72"
 />
 """
@@ -116,7 +116,7 @@ bin_and_bottles = """
     <geom
         name="bin_floor"
         type="box"
-        pos="0.45 0 0.05"
+        pos="0.45 0 0.35"
         size="0.30 0.30 0.05"
         rgba="0.35 0.35 0.35 1"
         contype="0"
@@ -131,7 +131,7 @@ bin_and_bottles = """
     <geom
         name="bin_back_wall"
         type="box"
-        pos="0.45 0.2925 0.09"
+        pos="0.45 0.2925 0.39"
         size="0.30 0.0075 0.04"
         rgba="0.35 0.35 0.35 1"
         contype="0"
@@ -141,7 +141,7 @@ bin_and_bottles = """
     <geom
         name="bin_front_wall"
         type="box"
-        pos="0.45 -0.2925 0.09"
+        pos="0.45 -0.2925 0.39"
         size="0.30 0.0075 0.04"
         rgba="0.35 0.35 0.35 1"
         contype="0"
@@ -151,7 +151,7 @@ bin_and_bottles = """
     <geom
         name="bin_left_wall"
         type="box"
-        pos="0.1575 0 0.09"
+        pos="0.1575 0 0.39"
         size="0.0075 0.30 0.04"
         rgba="0.35 0.35 0.35 1"
         contype="0"
@@ -161,7 +161,7 @@ bin_and_bottles = """
     <geom
         name="bin_right_wall"
         type="box"
-        pos="0.7425 0 0.09"
+        pos="0.7425 0 0.39"
         size="0.0075 0.30 0.04"
         rgba="0.35 0.35 0.35 1"
         contype="0"
@@ -175,7 +175,7 @@ bin_and_bottles = """
 
     <body
         name="bottle_1"
-        pos="0.30 0.15 0.10"
+        pos="0.30 0.15 0.40"
     >
 
         <geom
@@ -183,6 +183,7 @@ bin_and_bottles = """
             type="mesh"
             mesh="wine_bottle"
             material="wine_bottle_material"
+            rgba="1 0 0 1"
             contype="1"
             conaffinity="1"
         />
@@ -196,7 +197,7 @@ bin_and_bottles = """
 
     <body
         name="bottle_2"
-        pos="0.60 0.15 0.10"
+        pos="0.60 0.15 0.40"
     >
 
         <geom
@@ -204,6 +205,7 @@ bin_and_bottles = """
             type="mesh"
             mesh="wine_bottle"
             material="wine_bottle_material"
+            rgba="0 1 0 1"
             contype="1"
             conaffinity="1"
         />
@@ -217,7 +219,7 @@ bin_and_bottles = """
 
     <body
         name="bottle_3"
-        pos="0.30 -0.15 0.10"
+        pos="0.30 -0.15 0.40"
     >
 
         <geom
@@ -238,7 +240,7 @@ bin_and_bottles = """
 
     <body
         name="bottle_4"
-        pos="0.50 0.00 0.10"
+        pos="0.50 0.00 0.40"
     >
 
         <geom
@@ -246,6 +248,7 @@ bin_and_bottles = """
             type="mesh"
             mesh="wine_bottle"
             material="wine_bottle_material"
+            rgba="1 1 0 1"
             contype="1"
             conaffinity="1"
         />
