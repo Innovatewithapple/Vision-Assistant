@@ -29,6 +29,55 @@ model.vis.global_.offwidth = IMAGE_WIDTH
 model.vis.global_.offheight = IMAGE_HEIGHT
 data = mujoco.MjData(model)
 
+# ========================================================
+# PRINT ALL GEOM NAMES
+# ========================================================
+
+print("\n==============================")
+print("GEOM NAMES")
+print("==============================")
+
+for geom_id in range(model.ngeom):
+
+    geom_name = mujoco.mj_id2name(
+        model,
+        mujoco.mjtObj.mjOBJ_GEOM,
+        geom_id
+    )
+
+    print(
+        geom_id,
+        ":",
+        geom_name
+    )
+
+print("==============================")
+
+print("\n==============================")
+print("FINGER GEOMS")
+print("==============================")
+
+for geom_id in range(model.ngeom):
+
+    body_id = model.geom_bodyid[geom_id]
+
+    body_name = mujoco.mj_id2name(
+        model,
+        mujoco.mjtObj.mjOBJ_BODY,
+        body_id
+    )
+
+    if body_name in ["left_finger", "right_finger"]:
+
+        print(
+            "Geom ID:",
+            geom_id,
+            "| Body:",
+            body_name
+        )
+
+print("==============================")
+
 
 #------SIMULATION DATA----------@
 # Rotate Panda base
@@ -312,7 +361,7 @@ starting_qpos = data.qpos[:7].copy()
 
 # Position above the bottle
 
-approach_position = np.array([0.30, -0.15, 0.70])
+approach_position = np.array([0.30, -0.15, 0.73])
 
 
 # ============================================================
@@ -374,10 +423,23 @@ approach_hand_position = data.xpos[
     ik.hand_body_id
 ].copy()
 
+left_finger_position = data.xpos[
+        ik.left_finger_id
+    ].copy()
+
+right_finger_position = data.xpos[
+        ik.right_finger_id
+    ].copy()
+
+current_gripper_center = (
+        left_finger_position
+        + right_finger_position
+    ) / 2.0
+
 
 approach_error = (
     approach_position
-    - approach_hand_position
+    - current_gripper_center
 )
 
 
@@ -422,9 +484,53 @@ max_steps = 5000
 grasp_step_count = 0
 
 target_tolerance = 0.13 #0.01
+center_tolerance = 0.001
 lift_position = np.array([0.33, -0.15, 0.85])
 grasp_q = None
 
+# ========================================================
+# GRASP TARGET
+# ========================================================
+
+floor_z = 0.05
+
+# Bottle center height
+bottle_center_z = (
+    floor_z +
+    bottle_height / 2.0
+)
+
+# Bottle top height
+bottle_top_z = (
+    floor_z +
+    bottle_height
+)
+
+# Grasp slightly below the bottle top
+grasp_offset = 0.03   # 3 cm
+
+grasp_z = (
+    bottle_top_z -
+    grasp_offset
+)
+
+# Keep the same X/Y position as the bottle
+grasp_position = np.array([
+    0.30,
+    -0.15,
+    grasp_z
+])
+
+print("\n==============================")
+print("GRASP TARGET")
+print("==============================")
+
+print("Bottle center Z:", bottle_center_z)
+print("Bottle top Z:", bottle_top_z)
+print("Grasp Z:", grasp_z)
+print("Grasp position:", grasp_position)
+
+print("==============================")
 
 # ============================================================
 # GRIPPER
@@ -437,6 +543,9 @@ gripper_commanded = False
 # ============================================================
 # WRIST CAMERA + OVERVIEW CAMERA LOOP
 # ============================================================
+
+orientation_test_applied = False
+orientation_test_steps = 0
 
 while step_count < max_steps:
 
@@ -456,38 +565,105 @@ while step_count < max_steps:
     # ========================================================
 
     if phase == "open":
-        if gripper_commanded == True:
-            print("Gripper command true in open")
 
         data.ctrl[7] = GRIPPER_OPEN
 
-        if step_count >= 100:
+        left_finger_joint_id = mujoco.mj_name2id(
+            model,
+            mujoco.mjtObj.mjOBJ_JOINT,
+            "finger_joint1"
+        )
+
+        right_finger_joint_id = mujoco.mj_name2id(
+            model,
+            mujoco.mjtObj.mjOBJ_JOINT,
+            "finger_joint2"
+        )
+
+        left_qpos = data.qpos[
+            model.jnt_qposadr[left_finger_joint_id]
+        ]
+
+        right_qpos = data.qpos[
+            model.jnt_qposadr[right_finger_joint_id]
+        ]
+
+        left_open_limit = model.jnt_range[left_finger_joint_id, 1]
+        right_open_limit = model.jnt_range[right_finger_joint_id, 1]
+
+        if (
+            left_qpos >= left_open_limit - 1e-5
+            and
+            right_qpos >= right_open_limit - 1e-5
+        ):
 
             print("\n==============================")
-            print("GRIPPER OPEN")
+            print("GRIPPER FULLY OPEN")
+            print("==============================")
+            print(f"Left  = {left_qpos:.6f}")
+            print(f"Right = {right_qpos:.6f}")
+            print(f"Left limit  = {left_open_limit:.6f}")
+            print(f"Right limit = {right_open_limit:.6f}")
+            print("==============================")
+
+            left_finger_id = mujoco.mj_name2id(
+                model,
+                mujoco.mjtObj.mjOBJ_BODY,
+                "left_finger"
+            )
+
+            right_finger_id = mujoco.mj_name2id(
+                model,
+                mujoco.mjtObj.mjOBJ_BODY,
+                "right_finger"
+            )
+
+            left_finger_pos = data.xpos[left_finger_id].copy()
+            right_finger_pos = data.xpos[right_finger_id].copy()
+
+            gripper_center = (left_finger_pos + right_finger_pos) / 2.0
+
+            # ============================================================
+            # BOTTLE 3 CENTER
+            # ============================================================
+
+            bottle_geom_id = mujoco.mj_name2id(
+                model,
+                mujoco.mjtObj.mjOBJ_GEOM,
+                "bottle_3_geom"
+            )
+
+            bottle_center = data.geom_xpos[
+                bottle_geom_id
+            ].copy()
+
+
+            # ============================================================
+            # PRINT BOTH
+            # ============================================================
+
+            print("Left finger position : ", left_finger_pos)
+            print("Right finger position: ", right_finger_pos)
+
+            print("Gripper center       : ", gripper_center)
+
+            print("Bottle 3 center      : ", bottle_center)
+
             print("==============================")
 
             target_q = approach_q
-
             phase = "approach"
-
             step_count = 0
 
         continue
 
-
-    # ========================================================
     # CURRENT HAND POSITION
-    # ========================================================
+    current_hand_position = data.xpos[ik.hand_body_id].copy()
+    current_link7_position = data.xpos[ik.link7_body_id].copy()
 
-    current_hand_position = data.xpos[
-        ik.hand_body_id
-    ].copy()
-
-
-    current_link7_position = data.xpos[
-        ik.link7_body_id
-    ].copy()
+    left_finger_position = data.xpos[ik.left_finger_id].copy()
+    right_finger_position = data.xpos[ik.right_finger_id].copy()
+    current_gripper_center = (left_finger_position + right_finger_position) / 2.0
 
 
     # ========================================================
@@ -500,7 +676,7 @@ while step_count < max_steps:
 
         position_error = (
             approach_position
-            - current_hand_position
+            - current_gripper_center
         )
 
         distance_to_target = np.linalg.norm(
@@ -509,11 +685,10 @@ while step_count < max_steps:
 
 
         # ----------------------------------------------------
-        # Reached approach position?
+        # Reached actual approach target
         # ----------------------------------------------------
 
-        if step_count == 100:
-
+        if distance_to_target < target_tolerance:
             print("\n==============================")
             print("APPROACH DEBUG")
             print("==============================")
@@ -527,6 +702,9 @@ while step_count < max_steps:
             print("current_hand_position:")
             print(current_hand_position)
 
+            print("gripper center position:")
+            print(current_gripper_center)
+
             print("Position error:")
             print(position_error)
 
@@ -536,118 +714,188 @@ while step_count < max_steps:
             print("Tolerance:")
             print(target_tolerance)
 
-            print("CURRENT HAND:", current_hand_position)
+            print("CURRENT finger center:", current_gripper_center)
             print("APPROACH TARGET:", approach_position)
             print(
-                "HAND ERROR:",
-                approach_position - current_hand_position
+                "ERROR:",
+                approach_position - current_gripper_center
             )
 
             print("==============================")
 
+            # =================================================
+            # APPROACH FINISHED
+            # =================================================
 
-        # ----------------------------------------------------
-        # Reached actual approach target
-        # ----------------------------------------------------
+            current_qpos = data.qpos[:7].copy()
 
-        if distance_to_target < target_tolerance:
 
-            print("\n==============================")
-            print("APPROACH POSITION REACHED")
+            # =================================================
+            # CURRENT GRIPPER CENTER
+            # =================================================
+
+            left_finger_id = mujoco.mj_name2id(model,mujoco.mjtObj.mjOBJ_BODY,"left_finger")
+            right_finger_id = mujoco.mj_name2id(model,mujoco.mjtObj.mjOBJ_BODY,"right_finger")
+
+            left_finger_position = data.xpos[left_finger_id].copy()
+            right_finger_position = data.xpos[right_finger_id].copy()
+            gripper_center = (left_finger_position + right_finger_position) / 2.0
+
+            # =================================================
+            # BOTTLE 3 CENTER
+            # =================================================
+
+            bottle_geom_id = mujoco.mj_name2id(model,mujoco.mjtObj.mjOBJ_GEOM,"bottle_3_geom")
+            bottle_center = data.geom_xpos[bottle_geom_id].copy()
+
+            # ============================================================
+            # PRINT BOTH
+            # ============================================================
+
+            print("Left finger position : ", left_finger_pos)
+            print("Right finger position: ", right_finger_pos)
+
+            print("Gripper center       : ", gripper_center)
+
+            print("Bottle 3 center      : ", bottle_center)
+
             print("==============================")
 
-            print(
-                "Hand position:",
-                current_hand_position
-            )
-
-            print(
-                "Approach target:",
-                approach_position
-            )
-
-            print(
-                "Distance:",
-                distance_to_target
-            )
-
-            current_link7_position = data.xpos[
-                ik.link7_body_id
-            ].copy()
-
-            print(
-                "Link7 position:",
-                current_link7_position
-            )
-
-            print(
-                "Hand position:",
-                current_hand_position
-            )
-
 
             # =================================================
-            # SOLVE SECOND IK
+            # CENTER TARGET
+            # Keep current Z
+            # Change only X and Y
             # =================================================
 
-            current_qpos = data.qpos[
-                :7
-            ].copy()
-
-
-            # =================================================
-            # HAND OFFSET FROM LINK7
-            # =================================================
-
-            hand_offset_local = np.array([
-                0.0,
-                0.0,
-                0.107
+            center_position = np.array([
+                bottle_center[0],
+                bottle_center[1],
+                gripper_center[2]
             ])
 
 
-            link7_rotation = data.xmat[
-                ik.link7_body_id
-            ].reshape(3, 3).copy()
+            # =================================================
+            # CENTER IK
+            # =================================================
+            center_q = ik.solve(center_position)
+
+            # =================================================
+            # RESTORE REAL CURRENT PHYSICAL POSITION
+            # =================================================
+
+            data.qpos[:7] = current_qpos
+            mujoco.mj_forward(model,data)
+
+            # =================================================
+            # START CENTER PHASE
+            # =================================================
+
+            target_q = center_q
+
+            phase = "center"
+
+            step_count = 0
+
+    # ========================================================
+    # PHASE 3 — MOVE Center TO BOTTLE
+    # ========================================================
+    elif phase == "center":
+
+        # --------------------------------------------------------
+        # CURRENT FINGER CENTER
+        # --------------------------------------------------------
+
+        left_finger_position = data.xpos[
+            ik.left_finger_id
+        ].copy()
+
+        right_finger_position = data.xpos[
+            ik.right_finger_id
+        ].copy()
+
+        current_gripper_center = (
+            left_finger_position +
+            right_finger_position
+        ) / 2.0
 
 
-            hand_offset_world = (
-                link7_rotation
-                @ hand_offset_local
-            )
+        # --------------------------------------------------------
+        # REMAINING DISTANCE TO CENTER
+        # --------------------------------------------------------
+
+        position_error = (
+            center_position -
+            current_gripper_center
+        )
+
+        distance_to_target = np.linalg.norm(
+            position_error
+        )
 
 
-            grasp_link7_target = (
-                grasp_position
-                - hand_offset_world
-            )
+        # --------------------------------------------------------
+        # CENTER REACHED
+        # --------------------------------------------------------
 
-
-            grasp_q = ik.solve(
-                grasp_link7_target
-            )
-            lift_q = ik.solve(
-                lift_position
-            )
-
+        if distance_to_target < center_tolerance:
 
             print("\n==============================")
-            print("GRASP IK")
+            print("CENTER POSITION REACHED")
             print("==============================")
 
-            print("Hand target:")
-            print(grasp_position)
+            print("Target:")
+            print(center_position)
 
-            print("\nLink7 IK target:")
-            print(grasp_link7_target)
+            print("Current gripper center:")
+            print(current_gripper_center)
 
-            print("\nJoint targets:")
-            print(grasp_q)
+            print("Remaining error:")
+            print(position_error)
 
+            print("Distance:")
+            print(distance_to_target)
 
-            # ------------------------------------------------
-            # Restore REAL current physical position
-            # ------------------------------------------------
+            print("==============================")
+
+            grasp_target = current_gripper_center.copy()
+            grasp_target[2] -= 0.09
+
+            phase = "grasp"
+            
+
+        # --------------------------------------------------------
+        # STILL AWAY → MOVE THE REMAINING DISTANCE
+        # --------------------------------------------------------
+
+        else:
+            print("\n==============================")
+            print("Center not reached, trying again")
+            print("==============================")
+            print("Target:")
+            print(center_position)
+
+            print("Current gripper center:")
+            print(current_gripper_center)
+
+            print("Remaining error:")
+            print(position_error)
+
+            print("Distance:")
+            print(distance_to_target)
+
+            print("==============================")
+
+            correction_target = (
+                current_gripper_center +
+                position_error
+            )
+
+            current_qpos = data.qpos[:7].copy()
+
+            center_q = ik.solve(
+                correction_target
+            )
 
             data.qpos[:7] = current_qpos
 
@@ -656,81 +904,270 @@ while step_count < max_steps:
                 data
             )
 
-
-            target_q = grasp_q
-
-            phase = "grasp"
-
-            print(
-                "\nSwitching to GRASP phase..."
-            )
-
+            target_q = center_q
 
     # ========================================================
-    # PHASE 2 — MOVE DOWN TO BOTTLE
+    # PHASE 4 — MOVE 2 CM DOWN
     # ========================================================
 
     elif phase == "grasp":
-        grasp_step_count += 1
+
+        # ----------------------------------------------------
+        # Current gripper center
+        # ----------------------------------------------------
+
+        left_finger_position = (
+            data.xpos[ik.left_finger_id].copy()
+        )
+
+        right_finger_position = (
+            data.xpos[ik.right_finger_id].copy()
+        )
+
+        current_gripper_center = (
+            left_finger_position +
+            right_finger_position
+        ) / 2.0
+
+        # ----------------------------------------------------
+        # Distance to the fixed 2 cm lower target
+        # ----------------------------------------------------
 
         position_error = (
-            grasp_position
-            - current_hand_position
+            grasp_target -
+            current_gripper_center
         )
 
         distance_to_target = np.linalg.norm(
             position_error
         )
 
-        # print(f"\nInside Grasp==")
-        # print("distance_to_target: ",distance_to_target)
-        # print("target_tolerance: ",target_tolerance)
-        if distance_to_target <= target_tolerance:
+        # ----------------------------------------------------
+        # 2 CM DOWN REACHED
+        # ----------------------------------------------------
+
+        print("distance_to_target: ",distance_to_target)
+        if distance_to_target < center_tolerance:
 
             print("\n==============================")
-            print("GRASP POSITION REACHED")
+            print("2 CM DOWN REACHED")
             print("==============================")
 
-            print("\nDesired hand position:")
-            print(grasp_position)
+            print("\nGrasp target:")
+            print(grasp_target)
 
-            print("\nActual hand position:")
-            print(
-                data.xpos[
-                    ik.hand_body_id
-                ].copy()
+            print("\nCurrent gripper center:")
+            print(current_gripper_center)
+
+            print("\nRemaining error:")
+            print(position_error)
+
+            print("\nDistance:")
+            print(distance_to_target)
+
+            print("==============================")
+            print("READY FOR GRIPPER.")
+            # Close the fingers
+            phase = "close"
+
+            print("CLOSING GRIPPER")
+
+            
+
+        # ----------------------------------------------------
+        # MOVE TOWARD FIXED 2 CM LOWER TARGET
+        # ----------------------------------------------------
+
+        else:
+            # print("Going down!!!!!")
+
+            current_qpos = data.qpos[:7].copy()
+
+            grasp_q = ik.solve(
+                grasp_target
             )
 
-            print("\nActual link7 position:")
-            print(
-                data.xpos[
-                    ik.link7_body_id
-                ].copy()
+            # IK temporarily changes qpos.
+            # Restore the real physical position.
+            data.qpos[:7] = current_qpos
+
+            mujoco.mj_forward(
+                model,
+                data
             )
 
-            print("\nHand - Link7 offset:")
-            print(
-                data.xpos[ik.hand_body_id]
-                - data.xpos[ik.link7_body_id]
-            )
+            target_q = grasp_q
 
-            print("\nLink7 rotation:")
-            print(
-                data.xmat[
-                    ik.link7_body_id
-                ].reshape(3, 3)
-            )
-            # Close gripper
-            print(f"grasp_step_count: {grasp_step_count}")
-            if grasp_step_count >= 300:
-                data.ctrl[7] = GRIPPER_CLOSE
-                print("GRIPPER CLOSING...")
-            if grasp_step_count >= 700:
-                print("lifting")
-                target_q = lift_q
+    elif phase == "close":
+
+        orientation_test_steps += 1
+
+        # --------------------------------
+        # LET THE ARM REACH THE IK POSE
+        # --------------------------------
+        if orientation_test_steps < 500:
+            continue
+
+        # --------------------------------
+        # CLOSE GRIPPER
+        # --------------------------------
+        data.ctrl[7] = GRIPPER_CLOSE
+
+        print("\n==============================")
+        print("GRIPPER CLOSING")
+        print("==============================")
+
+        # Give the fingers time to physically close
+        if orientation_test_steps < 700:
+            continue
+
+        # --------------------------------
+        # CHECK ACTUAL HAND TILT
+        # --------------------------------
+
+        hand_z = data.xmat[ik.hand_body_id].reshape(3, 3)[:, 2]
+
+        desired_z = np.array([0.0, 0.0, -1.0])
+
+        cos_angle = np.clip(
+            np.dot(hand_z, desired_z),
+            -1.0,
+            1.0
+        )
+
+        tilt_angle = np.degrees(np.arccos(cos_angle))
+
+        print("\n==============================")
+        print("ACTUAL HAND ORIENTATION")
+        print("==============================")
+        print("Hand Z:", hand_z)
+        print(f"Tilt from vertical: {tilt_angle:.3f} degrees")
+        print("==============================")
+
+        # --------------------------------
+        # CHECK BOTTLE CONTACT
+        # --------------------------------
+        left_touch = False
+        right_touch = False
+
+        bottle_geom = 88
+
+        for i in range(data.ncon):
+
+            contact = data.contact[i]
+
+            geom1 = contact.geom1
+            geom2 = contact.geom2
+
+            # Left finger geoms: 70-77
+            if (
+                (70 <= geom1 <= 77 and geom2 == bottle_geom)
+                or
+                (70 <= geom2 <= 77 and geom1 == bottle_geom)
+            ):
+                left_touch = True
+
+            # Right finger geoms: 78-85
+            if (
+                (78 <= geom1 <= 85 and geom2 == bottle_geom)
+                or
+                (78 <= geom2 <= 85 and geom1 == bottle_geom)
+            ):
+                right_touch = True
+
+        print("\n==============================")
+        print("GRIPPER CONTACT RESULT")
+        print("==============================")
+        print("Left finger contact :", left_touch)
+        print("Right finger contact:", right_touch)
+        print("==============================")
 
 
-                
+        # ==========================================
+        # CALCULATE FINGER → BOTTLE DISTANCE
+        # ==========================================
+
+        def get_finger_bottle_distance(finger_geoms, bottle_geom):
+
+            min_distance = float("inf")
+
+            for finger_geom in finger_geoms:
+
+                distance = mujoco.mj_geomDistance(
+                    model,
+                    data,
+                    finger_geom,
+                    bottle_geom,
+                    1.0,
+                    None
+                )
+
+                min_distance = min(min_distance, distance)
+
+            return min_distance
+
+
+        left_distance = get_finger_bottle_distance(
+            range(70, 78),
+            bottle_geom
+        )
+
+        right_distance = get_finger_bottle_distance(
+            range(78, 86),
+            bottle_geom
+        )
+
+
+        print("\n==============================")
+        print("FINGER → BOTTLE DISTANCE")
+        print("==============================")
+        print(f"Left finger → bottle : {left_distance:.6f} m")
+        print(f"Right finger → bottle: {right_distance:.6f} m")
+        print("==============================")
+
+        # ==============================
+        # START LIFT TEST
+        # ==============================
+
+        left_finger_pos = data.xpos[ik.left_finger_id].copy()
+        right_finger_pos = data.xpos[ik.right_finger_id].copy()
+
+        current_gripper_center = (
+            left_finger_pos + right_finger_pos
+        ) / 2.0
+
+        # target_q = lift_q
+        orientation_test_steps = 0
+
+        print("\n==============================")
+        print("STARTING LIFT TEST")
+        print("==============================")
+        print("Current:", current_gripper_center)
+        # print("Target :", lift_target)
+        print("Lift   : +5 cm Z")
+        print("==============================")
+
+        phase = "lift"
+
+    elif phase == "lift":
+
+        if orientation_test_steps == 0:
+            # compute lift target WITHOUT disturbing the real state
+            saved_qpos = data.qpos[:7].copy()
+            start_q = saved_qpos.copy()
+
+            lift_target = current_gripper_center.copy()
+            lift_target[2] += 0.10
+            lift_q = ik.solve(lift_target)
+
+            data.qpos[:7] = saved_qpos          # <-- restore
+            mujoco.mj_forward(model, data)
+
+        # smooth ramp over 400 steps
+        alpha = min(orientation_test_steps / 400.0, 1.0)
+        target_q = (1 - alpha) * start_q + alpha * lift_q
+
+        orientation_test_steps += 1
 
 
     # ========================================================
@@ -759,8 +1196,8 @@ while step_count < max_steps:
     # ========================================================
     # JOINT MOVEMENT DEBUG
     # ========================================================
-
-    if step_count % 100 == 0 and phase == "approach":
+    # print("Step: ",step_count)
+    if step_count % 100 == 0 and phase == 'center':
 
         current_q = data.qpos[:7].copy()
 
@@ -803,6 +1240,11 @@ while step_count < max_steps:
         print("\nACTUATOR FORCE LIMIT:")
         print(model.actuator_forcerange[:7])
 
+        joint_error = target_q - data.qpos[:7]
+
+        print("TARGET Q:", target_q)
+        print("CURRENT Q:", data.qpos[:7])
+        print("JOINT ERROR:", joint_error)
         print("==============================")
 
 
@@ -851,31 +1293,13 @@ while step_count < max_steps:
     # ========================================================
 
     if masks is not None and track_ids is not None:
-
         polygons = masks.xy
-
-
-        for (
-            polygon,
-            box,
-            label,
-            track_id,
-            score
-        ) in zip(
-            polygons,
-            boxes,
-            labels,
-            track_ids,
-            scores
-        ):
+        for (polygon,box,label,track_id,score) in zip(polygons,boxes,labels,track_ids,scores):
 
             if score < 0.1:
                 continue
 
-
-            polygon = polygon.astype(
-                np.int32
-            )
+            polygon = polygon.astype(np.int32)
 
             track_id = int(
                 track_id
@@ -1000,14 +1424,14 @@ while step_count < max_steps:
             # Print world position
             # ------------------------------------------------
 
-            print(
-                f"Track {track_id} | "
-                f"{class_name} | "
-                f"World XYZ: "
-                f"X={world_x:.3f}, "
-                f"Y={world_y:.3f}, "
-                f"Z={world_z:.3f}"
-            )
+            # print(
+            #     f"Track {track_id} | "
+            #     f"{class_name} | "
+            #     f"World XYZ: "
+            #     f"X={world_x:.3f}, "
+            #     f"Y={world_y:.3f}, "
+            #     f"Z={world_z:.3f}"
+            # )
 
 
             # ------------------------------------------------
@@ -1154,206 +1578,3 @@ print(
 )
 
 cv2.destroyAllWindows()
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-# while True:
-
-#     # --------------------------------------------------------
-#     # Read keyboard input
-#     # --------------------------------------------------------
-
-#     key = cv2.waitKey(1) & 0xFF
-
-#     # --------------------------------------------------------
-#     # Camera movement
-#     # --------------------------------------------------------
-
-#     position_step = 0.02
-#     rotation_step = 0.02
-#     fov_step = 1.0
-
-#     if key == ord("w"):
-#         camera_pos[1] += position_step
-
-#     elif key == ord("s"):
-#         camera_pos[1] -= position_step
-
-#     elif key == ord("a"):
-#         camera_pos[0] -= position_step
-
-#     elif key == ord("d"):
-#         camera_pos[0] += position_step
-
-#     elif key == ord("q"):
-#         camera_pos[2] += position_step
-
-#     elif key == ord("e"):
-#         camera_pos[2] -= position_step
-
-#     # --------------------------------------------------------
-#     # Camera rotation
-#     # --------------------------------------------------------
-
-#     elif key == ord("j"):
-#         camera_euler[2] -= rotation_step
-
-#     elif key == ord("l"):
-#         camera_euler[2] += rotation_step
-
-#     elif key == ord("i"):
-#         camera_euler[0] -= rotation_step
-
-#     elif key == ord("k"):
-#         camera_euler[0] += rotation_step
-
-#     # --------------------------------------------------------
-#     # Field of view
-#     # --------------------------------------------------------
-
-#     elif key == ord("+") or key == ord("="):
-#         camera_fovy -= fov_step
-
-#     elif key == ord("-"):
-#         camera_fovy += fov_step
-
-#     # --------------------------------------------------------
-#     # Print current settings
-#     # --------------------------------------------------------
-
-#     elif key == ord("p"):
-#         print_camera_settings()
-
-#     # --------------------------------------------------------
-#     # Exit
-#     # --------------------------------------------------------
-
-#     elif key == 27:
-#         break
-
-#     # --------------------------------------------------------
-#     # Apply camera position
-#     # --------------------------------------------------------
-
-#     model.cam_pos[overview_camera_id] = camera_pos
-
-#     # --------------------------------------------------------
-#     # Convert Euler → quaternion
-#     # --------------------------------------------------------
-
-#     quaternion = np.zeros(4)
-
-#     mujoco.mju_euler2Quat(
-#         quaternion,
-#         camera_euler,
-#         "xyz"
-#     )
-
-#     model.cam_quat[overview_camera_id] = quaternion
-
-#     # --------------------------------------------------------
-#     # Apply FOV
-#     # --------------------------------------------------------
-
-#     model.cam_fovy[overview_camera_id] = camera_fovy
-
-#     # --------------------------------------------------------
-#     # IMPORTANT:
-#     # Recalculate MuJoCo's derived state
-#     # --------------------------------------------------------
-
-#     mujoco.mj_forward(model, data)
-
-#     # --------------------------------------------------------
-#     # Render
-#     # --------------------------------------------------------
-
-#     renderer.update_scene(
-#         data,
-#         camera="overview_camera"
-#     )
-
-#     image = renderer.render()
-
-#     image = np.asarray(image)
-
-#     image = cv2.cvtColor(
-#         image,
-#         cv2.COLOR_RGB2BGR
-#     )
-
-#     cv2.imshow(
-#         "Panda Bin Picking",
-#         image
-#     )
-
-
-# cv2.destroyAllWindows()

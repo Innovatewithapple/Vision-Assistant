@@ -14,115 +14,349 @@ class PandaIK:
             "link7"
         )
 
-    def solve(self, target_position, iterations=1000):
-        target_position = np.array(target_position,dtype=float)
+        # Finger bodies
+        self.left_finger_id = mujoco.mj_name2id(
+            model,
+            mujoco.mjtObj.mjOBJ_BODY,
+            "left_finger"
+        )
 
-        # Save the actual robot state
-        original_qpos = self.data.qpos.copy()
+        self.right_finger_id = mujoco.mj_name2id(
+            model,
+            mujoco.mjtObj.mjOBJ_BODY,
+            "right_finger"
+        )
 
-        #--Start from the current robot configuration--!
+        self.arm_dofs = 7
+
+    def solve(self, target_position, iterations=2000):
+        target_position = np.array(target_position, dtype=float)
+
+        # --------------------------------------------------
+        # Desired hand orientation
+        # Only care about the hand Z axis pointing downward.
+        # This means 0 degree tilt.
+        # --------------------------------------------------
+        desired_hand_z = np.array([0.0, 0.0, -1.0])
+
+        # Start from current robot configuration
         q = self.data.qpos[:self.arm_dofs].copy()
 
         for iteration in range(iterations):
-            #--Put temporary configuration into MUJOCO--!
+
+            # ----------------------------------------------
+            # Put temporary IK configuration into MuJoCo
+            # ----------------------------------------------
             self.data.qpos[:self.arm_dofs] = q
+            mujoco.mj_forward(self.model, self.data)
 
-            mujoco.mj_forward(self.model,self.data)
+            # ==================================================
+            # 1. POSITION
+            # ==================================================
 
-            #--Current hand position--!
-            current_position = self.data.xpos[self.hand_body_id].copy()
+            # Current finger positions
+            left_finger_position = (
+                self.data.xpos[self.left_finger_id].copy()
+            )
 
-            #--Position Error--!
-            error = target_position - current_position
+            right_finger_position = (
+                self.data.xpos[self.right_finger_id].copy()
+            )
 
-            if (iteration + 1) % 10 == 0:
-                print(
-                    f"Iteration {iteration + 1}: "
-                    f"error = {np.linalg.norm(error):.6f} m"
-                )
+            # Finger-based gripper center
+            current_position = (
+                left_finger_position + right_finger_position
+            ) / 2.0
 
-            #--Close enough--!
-            if np.linalg.norm(error) < 0.001:
-                print(f"\n Reached close enough | error = {np.linalg.norm(error):.6f} m")
-                break
+            # Position error
+            position_error = (
+                target_position - current_position
+            )
 
-            #--Position Jacobian--!
-            jacobian_position = np.zeros((3,self.model.nv))
+            # ----------------------------------------------
+            # Left finger Jacobian
+            # ----------------------------------------------
+            jacobian_position_left = np.zeros(
+                (3, self.model.nv)
+            )
 
-            #--Rotation Jacobian--!
-            jacobian_rotation = np.zeros((3,self.model.nv))
+            jacobian_rotation_left = np.zeros(
+                (3, self.model.nv)
+            )
 
-            #--Now we calculate the affection by changing values--! (if i do this change how much it affect the joint or hand)
             mujoco.mj_jac(
                 self.model,
                 self.data,
-                jacobian_position,
-                jacobian_rotation,
-                current_position,
+                jacobian_position_left,
+                jacobian_rotation_left,
+                left_finger_position,
+                self.left_finger_id
+            )
+
+            # ----------------------------------------------
+            # Right finger Jacobian
+            # ----------------------------------------------
+            jacobian_position_right = np.zeros(
+                (3, self.model.nv)
+            )
+
+            jacobian_rotation_right = np.zeros(
+                (3, self.model.nv)
+            )
+
+            mujoco.mj_jac(
+                self.model,
+                self.data,
+                jacobian_position_right,
+                jacobian_rotation_right,
+                right_finger_position,
+                self.right_finger_id
+            )
+
+            # ----------------------------------------------
+            # Finger-center position Jacobian
+            # ----------------------------------------------
+            jacobian_position = (
+                jacobian_position_left
+                + jacobian_position_right
+            ) / 2.0
+
+            J_position = (
+                jacobian_position[:, :self.arm_dofs]
+            )
+
+            # ==================================================
+            # 2. ORIENTATION / TILT
+            # ==================================================
+
+            # Current hand rotation matrix
+            hand_rotation = self.data.xmat[
+                self.hand_body_id
+            ].reshape(3, 3)
+
+            # Hand local Z axis expressed in world coordinates
+            current_hand_z = hand_rotation[:, 2].copy()
+
+            # Orientation error:
+            # We want current_hand_z -> desired_hand_z
+            orientation_error = (
+                desired_hand_z - current_hand_z
+            )
+
+            # ----------------------------------------------
+            # Hand rotational Jacobian
+            # ----------------------------------------------
+            hand_position = self.data.xpos[
+                self.hand_body_id
+            ].copy()
+
+            jacobian_position_hand = np.zeros(
+                (3, self.model.nv)
+            )
+
+            jacobian_rotation_hand = np.zeros(
+                (3, self.model.nv)
+            )
+
+            mujoco.mj_jac(
+                self.model,
+                self.data,
+                jacobian_position_hand,
+                jacobian_rotation_hand,
+                hand_position,
                 self.hand_body_id
             )
-            #--Only Panda Arm Joint--!
-            J = jacobian_position[:,:self.arm_dofs]
 
-            #--Damped least-squares IK--!
+            # Only Panda arm joints
+            J_rotation = (
+                jacobian_rotation_hand[:, :self.arm_dofs]
+            )
+
+            # ----------------------------------------------
+            # Convert angular Jacobian into a Jacobian
+            # for the HAND Z AXIS.
+            #
+            # dz = omega x z
+            # ----------------------------------------------
+            z = current_hand_z
+
+            skew_z = np.array([
+                [0.0,   -z[2],  z[1]],
+                [z[2],   0.0,  -z[0]],
+                [-z[1], z[0],   0.0]
+            ])
+
+            J_hand_z = -skew_z @ J_rotation
+
+            # ==================================================
+            # 3. COMBINE POSITION + ORIENTATION
+            # ==================================================
+
+            # Position is in meters.
+            # Orientation error is dimensionless.
+            #
+            # Increase this if orientation needs to have
+            # stronger influence.
+            position_weight = 1.0
+            orientation_weight = 1.0
+
+            J_combined = np.vstack([
+                position_weight * J_position,
+                orientation_weight * J_hand_z
+            ])
+
+            error_combined = np.concatenate([
+                position_weight * position_error,
+                orientation_weight * orientation_error
+            ])
+
+            # ==================================================
+            # 4. DAMPED LEAST-SQUARES IK
+            # ==================================================
+
             damping = 0.05
 
-            dq = J.T @ np.linalg.solve(
-                J @ J.T + damping ** 2 * np.eye(3), error
+            dq = J_combined.T @ np.linalg.solve(
+                J_combined @ J_combined.T
+                + damping ** 2 * np.eye(6),
+                error_combined
             )
-            if iteration == 0:
 
-                print("\n==============================")
-                print("FIRST IK ITERATION")
-                print("==============================")
-
-                print("\nERROR:")
-                print(error)
-
-                print("\nJACOBIAN:")
-                print(J)
-
-                print("\nDQ:")
-                print(dq)
-            #--Small Step--!
+            # Small IK step
             step_size = 0.05
 
             q += step_size * dq
 
-            #--Respect panda joint limit--!
+            # ==================================================
+            # 5. RESPECT PANDA JOINT LIMITS
+            # ==================================================
+
             for joint_index in range(self.arm_dofs):
-                lower = self.model.jnt_range[joint_index,0]
-                upper = self.model.jnt_range[joint_index,1]
 
-                q[joint_index] = np.clip(q[joint_index],lower,upper)
+                lower = self.model.jnt_range[
+                    joint_index, 0
+                ]
 
-        # #--Restore final configuration--!
-        # # self.data.qpos[:self.arm_dofs] = q
-        # self.data.qpos[:] = original_qpos
-        # mujoco.mj_forward(self.model,self.data)
+                upper = self.model.jnt_range[
+                    joint_index, 1
+                ]
 
-        # return q
+                q[joint_index] = np.clip(
+                    q[joint_index],
+                    lower,
+                    upper
+                )
 
-        # --Keep final IK configuration--!
+            # ==================================================
+            # 6. OPTIONAL CONVERGENCE CHECK
+            # ==================================================
+
+            position_error_norm = np.linalg.norm(
+                position_error
+            )
+
+            tilt_error = np.linalg.norm(
+                orientation_error
+            )
+
+            if (
+                position_error_norm < 0.001
+                and tilt_error < 0.00001
+            ):
+                break
+
+        # ======================================================
+        # KEEP FINAL IK CONFIGURATION
+        # ======================================================
+
         self.data.qpos[:self.arm_dofs] = q
         mujoco.mj_forward(self.model, self.data)
 
-        # --Verify actual final IK result--!
-        final_position = self.data.xpos[self.hand_body_id].copy()
-        final_error = target_position - final_position
-        final_error_norm = np.linalg.norm(final_error)
+        # ======================================================
+        # FINAL POSITION CHECK
+        # ======================================================
 
-        print("\n==============================")
-        print("IK FINAL RESULT")
-        print("==============================")
-        print("Iterations used:", iteration + 1)
-        print("Target position:", target_position)
-        print("Final hand position:", final_position)
-        print("Final error:", final_error)
-        print("Final error norm:", final_error_norm)
-        print("Tolerance:", 0.001)
-        print("Converged:", final_error_norm < 0.001)
-        print("==============================")
+        final_left = self.data.xpos[
+            self.left_finger_id
+        ].copy()
+
+        final_right = self.data.xpos[
+            self.right_finger_id
+        ].copy()
+
+        final_position = (
+            final_left + final_right
+        ) / 2.0
+
+        final_position_error = (
+            target_position - final_position
+        )
+
+        final_position_error_norm = np.linalg.norm(
+            final_position_error
+        )
+
+        # ======================================================
+        # FINAL ORIENTATION CHECK
+        # ======================================================
+
+        final_hand_rotation = self.data.xmat[
+            self.hand_body_id
+        ].reshape(3, 3)
+
+        final_hand_z = final_hand_rotation[:, 2]
+
+        cos_angle = np.clip(
+            np.dot(
+                final_hand_z,
+                desired_hand_z
+            ),
+            -1.0,
+            1.0
+        )
+
+        final_tilt_angle = np.degrees(
+            np.arccos(cos_angle)
+        )
+
+        # ======================================================
+        # PRINT RESULT
+        # ======================================================
+
+        # print("\n==============================")
+        # print("IK FINAL RESULT")
+        # print("==============================")
+
+        # print("Iterations used:", iteration + 1)
+
+        # print("\nPOSITION")
+        # print("Target position:", target_position)
+        # print("Final gripper center:", final_position)
+        # print("Final position error:",
+        #     final_position_error)
+        # print("Final position error norm:",
+        #     final_position_error_norm)
+
+        # print("\nORIENTATION")
+        # print("Desired hand Z:", desired_hand_z)
+        # print("Final hand Z:", final_hand_z)
+        # print(
+        #     f"Final tilt from vertical: "
+        #     f"{final_tilt_angle:.6f} degrees"
+        # )
+
+        # print("\nSTATUS")
+        # print(
+        #     "Position converged:",
+        #     final_position_error_norm < 0.001
+        # )
+
+        # print(
+        #     "Orientation converged:",
+        #     final_tilt_angle < 0.1
+        # )
+
+        # print("==============================")
 
         return q
 

@@ -7,7 +7,11 @@ from pathlib import Path
 
 PROJECT_DIR = Path(__file__).resolve().parent.parent
 
-PANDA_DIR = (PROJECT_DIR / "mujoco_menagerie" / "franka_emika_panda")
+PANDA_DIR = (
+    PROJECT_DIR
+    / "mujoco_menagerie"
+    / "franka_emika_panda"
+)
 
 PANDA_XML = PANDA_DIR / "panda.xml"
 
@@ -15,9 +19,15 @@ PANDA_ASSETS = PANDA_DIR / "assets"
 
 BOTTLE_DIR = PROJECT_DIR / "bottle"
 
-BOTTLE_OBJ = (BOTTLE_DIR / "14042_750_mL_Wine_Bottle_r_v1_L3.obj")
+BOTTLE_OBJ = (
+    BOTTLE_DIR
+    / "14042_750_mL_Wine_Bottle_r_v1_L3.obj"
+)
 
-BOTTLE_TEXTURE = (BOTTLE_DIR / "14042_750_mL_Wine_Bottle_dfinal.png")
+BOTTLE_TEXTURE = (
+    BOTTLE_DIR
+    / "14042_750_mL_Wine_Bottle_dfinal.png"
+)
 
 
 # ============================================================
@@ -31,7 +41,20 @@ panda_xml = PANDA_XML.read_text()
 # MAKE PANDA ASSET PATH ABSOLUTE
 # ============================================================
 
-panda_xml = panda_xml.replace('meshdir="assets"',f'meshdir="{PANDA_ASSETS}"')
+panda_xml = panda_xml.replace(
+    'meshdir="assets"',
+    f'meshdir="{PANDA_ASSETS}"'
+)
+
+import re
+
+m = re.search(r'<[^<>]*name="actuator8"[^<>]*>', panda_xml, re.S)
+if m:
+    tag = m.group(0)
+    new_tag = re.sub(r'biasprm="[^"]*"', 'biasprm="0 -1000 -10"', tag)
+    new_tag = re.sub(r'gainprm="[^"]*"', 'gainprm="0.1568627451 0 0"', new_tag)
+    panda_xml = panda_xml.replace(tag, new_tag)
+    print("Gripper actuator tag:", new_tag)
 
 # ============================================================
 # WRIST CAMERA
@@ -119,8 +142,8 @@ bin_and_bottles = """
         pos="0.45 0 0.35"
         size="0.30 0.30 0.05"
         rgba="0.35 0.35 0.35 1"
-        contype="0"
-        conaffinity="0"
+        contype="1"
+        conaffinity="1"
     />
 
 
@@ -134,8 +157,8 @@ bin_and_bottles = """
         pos="0.45 0.2925 0.39"
         size="0.30 0.0075 0.04"
         rgba="0.35 0.35 0.35 1"
-        contype="0"
-        conaffinity="0"
+        contype="1"
+        conaffinity="1"
     />
 
     <geom
@@ -144,8 +167,8 @@ bin_and_bottles = """
         pos="0.45 -0.2925 0.39"
         size="0.30 0.0075 0.04"
         rgba="0.35 0.35 0.35 1"
-        contype="0"
-        conaffinity="0"
+        contype="1"
+        conaffinity="1"
     />
 
     <geom
@@ -154,8 +177,8 @@ bin_and_bottles = """
         pos="0.1575 0 0.39"
         size="0.0075 0.30 0.04"
         rgba="0.35 0.35 0.35 1"
-        contype="0"
-        conaffinity="0"
+        contype="1"
+        conaffinity="1"
     />
 
     <geom
@@ -164,8 +187,8 @@ bin_and_bottles = """
         pos="0.7425 0 0.39"
         size="0.0075 0.30 0.04"
         rgba="0.35 0.35 0.35 1"
-        contype="0"
-        conaffinity="0"
+        contype="1"
+        conaffinity="1"
     />
 
 
@@ -178,12 +201,15 @@ bin_and_bottles = """
         pos="0.30 0.15 0.40"
     >
 
+        <freejoint/>
+
         <geom
             name="bottle_1_geom"
             type="mesh"
             mesh="wine_bottle"
             material="wine_bottle_material"
-            rgba="1 0 0 1"
+            mass="0.3"
+            friction="2.0 0.1 0.01"
             contype="1"
             conaffinity="1"
         />
@@ -200,12 +226,15 @@ bin_and_bottles = """
         pos="0.60 0.15 0.40"
     >
 
+        <freejoint/>
+
         <geom
             name="bottle_2_geom"
             type="mesh"
             mesh="wine_bottle"
             material="wine_bottle_material"
-            rgba="0 1 0 1"
+            mass="0.3"
+            friction="2.0 0.1 0.01"
             contype="1"
             conaffinity="1"
         />
@@ -222,11 +251,15 @@ bin_and_bottles = """
         pos="0.30 -0.15 0.40"
     >
 
+        <freejoint/>
+
         <geom
             name="bottle_3_geom"
             type="mesh"
             mesh="wine_bottle"
             material="wine_bottle_material"
+            mass="0.3"
+            friction="2.0 0.1 0.01"
             contype="1"
             conaffinity="1"
         />
@@ -243,18 +276,22 @@ bin_and_bottles = """
         pos="0.50 0.00 0.40"
     >
 
+        <freejoint/>
+
         <geom
             name="bottle_4_geom"
             type="mesh"
             mesh="wine_bottle"
             material="wine_bottle_material"
-            rgba="1 1 0 1"
+            mass="0.3"
+            friction="2.0 0.1 0.01"
             contype="1"
             conaffinity="1"
         />
 
     </body>
 """
+
 
 panda_xml = panda_xml.replace(
     "</worldbody>",
