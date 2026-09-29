@@ -22,6 +22,7 @@ IMAGE_HEIGHT = 720
 
 #-------Load XML---------@
 model = mujoco.MjModel.from_xml_string(SCENE_XML)
+print("cone:", model.opt.cone, "impratio:", model.opt.impratio, "noslip:", model.opt.noslip_iterations)
 
 
 #-------OFFSCREEN FRAMEBUFFER--------!
@@ -1005,8 +1006,8 @@ while step_count < max_steps:
         # --------------------------------
         # LET THE ARM REACH THE IK POSE
         # --------------------------------
-        if orientation_test_steps < 500:
-            continue
+        # if orientation_test_steps < 500:
+        #     continue
 
         # --------------------------------
         # CLOSE GRIPPER

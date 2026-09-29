@@ -57,6 +57,22 @@ if m:
     print("Gripper actuator tag:", new_tag)
 
 # ============================================================
+# STIFFER FRICTION (stops slow slipping)
+# ============================================================
+
+if "<option" in panda_xml:
+    panda_xml = re.sub(
+        r'<option\b',
+        '<option cone="elliptic" impratio="10" noslip_iterations="5"',
+        panda_xml, count=1
+    )
+else:
+    panda_xml = panda_xml.replace(
+        "<worldbody>",
+        '<option cone="elliptic" impratio="10" noslip_iterations="5"/><worldbody>', 1
+    )
+
+# ============================================================
 # WRIST CAMERA
 # ============================================================
 

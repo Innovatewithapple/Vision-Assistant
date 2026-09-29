@@ -1,0 +1,36 @@
+{
+ "Rectangle025__0.obj": {
+  "material": "Rectangle025",
+  "rgba": [
+   0.4,
+   0.4,
+   0.4,
+   1.0
+  ]
+ },
+ "Rectangle025_1__0.obj": {
+  "material": "Rectangle025_1",
+  "rgba": null
+ },
+ "Rectangle025_2__0.obj": {
+  "material": "Rectangle025_2",
+  "rgba": [
+   0.4,
+   0.4,
+   0.4,
+   1.0
+  ]
+ },
+ "Rectangle025_3__0.obj": {
+  "material": "Rectangle025_3",
+  "rgba": null
+ },
+ "Rectangle025_3__1.obj": {
+  "material": "Rectangle025_3",
+  "rgba": null
+ },
+ "Rectangle025_3__2.obj": {
+  "material": "Rectangle025_3",
+  "rgba": null
+ }
+}
