@@ -2,7 +2,7 @@ from ultralytics import YOLO
 
 class Segmentation:
     def __init__(self):
-        self.model = YOLO("yolo26n-seg.pt")
+        self.model = YOLO("yolo26s-seg.pt")
 
     def segment(self,frame):
         results = self.model.track(frame,persist=True,tracker="bytetrack.yaml",verbose=False,device='mps')
