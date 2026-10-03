@@ -2,117 +2,146 @@ import cv2
 from YOLO.segmentation import colors
 import numpy as np
 import mujoco
-seen_track_ids = set()
+from Calculation.panda_ik import PandaIK
 
-def Calculate_World_Position(
-    box,
-    model,
-    data,
-    bottle_height=0.30,
-    counter_z=0.485
-):
-    # ------------------------------------------------------------
-    # Detection center pixel
-    # ------------------------------------------------------------
-    x1, y1, x2, y2 = box.int().tolist()
+BOTTLE_RADIUS = 0.0368 - 0.005
+BOTTLE_HEIGHT = 0.30
+APPROACH_CLEARANCE = 0.30
+REGISTER_MATCH_RADIUS = 0.05   # meters — how close a new reading must be to count as "same bottle"
+detected_bottles = {}   # key: bottle_id (int, 0,1,2...), value: {"pos": [x,y,z], "confirmed": True}
+detection_enabled = True
+_last_print_cam = None
 
-    u = (x1 + x2) / 2.0
-    v = y2
+TRUTH_XY = None
 
-    # ------------------------------------------------------------
-    # Wrist camera
-    # ------------------------------------------------------------
+def set_truth(xy):
+    global TRUTH_XY
+    TRUTH_XY = np.array(xy)
 
-    camera_id = mujoco.mj_name2id(
-        model,
-        mujoco.mjtObj.mjOBJ_CAMERA,
-        "wrist_camera"
-    )
 
-    camera_position = data.cam_xpos[camera_id].copy()
+def disable_detection_and_get_bottles():
+    """Call this once scanning is done. Freezes detection and returns
+    the final registered bottle list."""
+    set_detection_enabled(False)
+    for bottle_id, info in detected_bottles.items():
+        x, y, z = info["pos"]
+        print(f"FINAL bottle_{bottle_id} (used for approach): X={x:.3f}, Y={y:.3f}, Z={z:.3f}")
+    return detected_bottles
 
-    camera_rotation = (
-        data.cam_xmat[camera_id]
-        .reshape(3, 3)
-    )
 
-    # ------------------------------------------------------------
-    # Camera intrinsics
-    # ------------------------------------------------------------
+def approach_bottle(bottle_id, model, data, ik, bottle_height=BOTTLE_HEIGHT, clearance=APPROACH_CLEARANCE):
+    """
+    Computes an IK target positioned above the given registered bottle,
+    solves for it, and returns the joint target (does NOT apply it to
+    data.qpos permanently — caller decides how to drive toward it).
+    """
+    if bottle_id not in detected_bottles:
+        raise ValueError(f"bottle_id {bottle_id} not found in detected_bottles")
 
-    IMAGE_WIDTH = 1280
-    IMAGE_HEIGHT = 960
+    bx, by, bz = detected_bottles[bottle_id]["pos"]
 
-    fovy = model.cam_fovy[camera_id]
+    approach_position = np.array([bx, by, bz + bottle_height + clearance])
 
-    center_x = IMAGE_WIDTH / 2.0
-    center_y = IMAGE_HEIGHT / 2.0
+    # don't let ik.solve's internal qpos scratch-work affect the live sim
+    saved_qpos = data.qpos[:7].copy()
+    approach_q = ik.solve(approach_position)
+    data.qpos[:7] = saved_qpos
+    mujoco.mj_forward(model, data)
 
-    fovy_rad = np.radians(fovy)
-    fx = (
-    0.5 * IMAGE_WIDTH
-    / np.tan(fovy_rad / 2.0)
-    )
-    fy = (
-    0.5 * IMAGE_HEIGHT
-    / np.tan(fovy_rad / 2.0)
-    )
-    ray_camera = np.array([
-    (u - center_x) / fx,
-    -(v - center_y) / fy,
-    -1.0
-    ])
-    # ------------------------------------------------------------
-    # Camera ray -> world ray
-    # ------------------------------------------------------------
+    return approach_q, approach_position
 
-    ray_world = camera_rotation @ ray_camera
+def set_detection_enabled(enabled: bool):
+    global detection_enabled
+    detection_enabled = enabled
 
-    # ------------------------------------------------------------
-    # Ray-plane intersection
-    # ------------------------------------------------------------
+def Calculate_World_Position(polygon, model, data, counter_z=0.485, bottle_radius=BOTTLE_RADIUS):
+    v_max = polygon[:, 1].max()
+    bottom = polygon[polygon[:, 1] >= v_max - 2.0]          # points within 2 px of the lowest row
+    u = (bottom[:, 0].min() + bottom[:, 0].max()) / 2.0 + 0.5
+    v = v_max + 0.5
 
-    scale = (
-        counter_z - camera_position[2]
-    ) / ray_world[2]
+    cam_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_CAMERA, "wrist_camera")
+    cam_pos = data.cam_xpos[cam_id].copy()
+    R = data.cam_xmat[cam_id].reshape(3, 3)
 
-    world_position = (
-        camera_position
-        + scale * ray_world
-    )
+    W, H = 1280, 960   # MUST equal the renderer's width/height (see point 3)
+    fy = 0.5 * H / np.tan(np.radians(model.cam_fovy[cam_id]) / 2.0)
+    fx = fy             # square pixels
+    cx, cy = W / 2.0, H / 2.0
 
-    return world_position
+    a = (u - cx) / fx
+    b = -(v - cy) / fy
+    ray_world = R @ np.array([a, b, -1.0])
 
-def Draw_Segmentation(frame, boxes, labels, scores, mask, track_ids, class_names,model,data):
+    t = (counter_z - cam_pos[2]) / ray_world[2]
+    edge = cam_pos + t * ray_world
+
+    # Ground line of this image row: plane normal x world-up
+    plane_normal = R @ np.array([0.0, 1.0, b])
+    line_dir = np.cross(plane_normal, [0.0, 0.0, 1.0])[:2]
+    n = np.array([-line_dir[1], line_dir[0]])
+    n /= np.linalg.norm(n)
+    if np.dot(n, edge[:2] - cam_pos[:2]) < 0:   # point away from the camera
+        n = -n
+
+    center_xy = edge[:2] + bottle_radius * n
+    return np.array([center_xy[0], center_xy[1], counter_z])
+
+
+def register_bottle(world_position, radius=REGISTER_MATCH_RADIUS):
+    for bottle_id, info in detected_bottles.items():
+        known_xy = np.array(info["pos"][:2])
+        if np.linalg.norm(world_position[:2] - known_xy) < radius:
+            info["pos"] = world_position.tolist()
+            return bottle_id, False
+
+    new_id = len(detected_bottles)
+    detected_bottles[new_id] = {"pos": world_position.tolist(), "confirmed": True}
+    return new_id, True
+
+
+def Draw_Segmentation(frame, boxes, labels, scores, mask, track_ids, class_names, model, data):
     wrist_overlay = frame.copy()
-    if mask is not None:
+
+    if detection_enabled and mask is not None:
         polygons = mask.xy
-        
+
         for idx, (polygon, box, label, score) in enumerate(zip(polygons, boxes, labels, scores)):
             class_name = class_names[int(label)]
             if class_name != 'bottle':
                 continue
 
-            polygon = polygon.astype(np.int32)
-            
-            # --- color selection (testing mode) ---
-            track_id = None
-            if track_ids is not None:
-                track_id = int(track_ids[idx])
-                if track_id not in seen_track_ids:
-                    world_position = Calculate_World_Position(box,model,data)
-                    print(f"Track_ID {track_id}: "f"World Position -> "f"X={world_position[0]:.3f}, "f"Y={world_position[1]:.3f}, "f"Z={world_position[2]:.3f}")
-                    print(f"Class: {class_name} | "f"score: {score:.2f} | "f"trackID: {track_ids[idx]}"f"box: {box.tolist()}")
-                    seen_track_ids.add(track_id)
-                color = colors[track_id % len(colors)]
-            else:
-                color = colors[int(label) % len(colors)]
+            world_position = Calculate_World_Position(polygon, model, data)
+            if not (0.20 <= world_position[1] <= 0.32):   
+                # print("Ghost bottle Detected!!!")
+                continue
+            if TRUTH_XY is not None:
+                global _last_print_cam
+                cam_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_CAMERA, "wrist_camera")
+                cam_pos = data.cam_xpos[cam_id].copy()
+                if _last_print_cam is None or np.linalg.norm(cam_pos - _last_print_cam) > 0.01:
+                    _last_print_cam = cam_pos
+                    diff = world_position[:2] - TRUTH_XY
+                    view = (TRUTH_XY - cam_pos[:2]) / np.linalg.norm(TRUTH_XY - cam_pos[:2])
+                    along = float(np.dot(diff, view)) * 1000                      # + = estimate too far from camera
+                    across = float(diff[0] * -view[1] + diff[1] * view[0]) * 1000  # sideways error
+                    print(f"pose cam=({cam_pos[0]:.2f},{cam_pos[1]:.2f},{cam_pos[2]:.2f}) "
+                        f"est=({world_position[0]:.3f},{world_position[1]:.3f}) "
+                        f"truth=({TRUTH_XY[0]:.3f},{TRUTH_XY[1]:.3f}) "
+                        f"err={np.linalg.norm(diff)*1000:.1f} mm  along={along:+.1f}  across={across:+.1f}")
+            bottle_id, is_new = register_bottle(world_position)
 
-            cv2.fillPoly(wrist_overlay, [polygon], color=color)
-            cv2.polylines(wrist_overlay, [polygon], isClosed=True, color=color, thickness=1, lineType=cv2.LINE_AA)
+            if is_new:
+                print(f"Registered bottle_{bottle_id}: "
+                      f"X={world_position[0]:.3f}, Y={world_position[1]:.3f}, Z={world_position[2]:.3f}")
+
+            color = colors[bottle_id % len(colors)]
+
+            polygon_draw = polygon.astype(np.int32)
+            cv2.fillPoly(wrist_overlay, [polygon_draw], color=color)
+            cv2.polylines(wrist_overlay, [polygon_draw], isClosed=True, color=color, thickness=1, lineType=cv2.LINE_AA)
 
     alpha = 0.27
     wrist_frame = cv2.addWeighted(frame, 1 - alpha, wrist_overlay, alpha, 0)
 
     return wrist_frame
-

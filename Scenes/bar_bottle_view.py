@@ -128,6 +128,7 @@ for i in range(1, N_BOTTLES + 1):
     for attempt in range(100):
         x = random.uniform(*COUNTER_X_RANGE)
         y = random.uniform(*COUNTER_Y_RANGE)
+        y += 0.10
         if all((x - px)**2 + (y - py)**2 >= MIN_SPACING**2 for px, py in placed):
             break
     placed.append((x, y))
@@ -231,11 +232,11 @@ panda_equality_block  = block_to_string(root.find("equality"))
 panda_contact_block   = block_to_string(root.find("contact"))
 panda_sensor_block    = block_to_string(root.find("sensor"))
 
-ROBOT_POS = (0.70, 0.65, 0)
+ROBOT_POS = (0.70, 0.58, 0)
 panda_worldbody_wrapped = (
     f'<body name="panda_base" '
     f'pos="{ROBOT_POS[0]} {ROBOT_POS[1]} {ROBOT_POS[2]}" '
-    f'euler="0 0 {math.radians(180):.6f}">'
+    f'euler="0 0 {math.radians(90):.6f}">'
     f'{panda_worldbody_block}'
     f'</body>'
 )
@@ -278,10 +279,10 @@ XML = f"""
 
     {bar_geoms}
     {counter_collision}
-    {bottle_bodies}
     {stool_geom}
     {bin_geom}
     {panda_worldbody_wrapped}
+    {bottle_bodies}
 
     <light directional="true" pos="0 0 5" dir="0.3 0.4 -1"
            diffuse="1.2 1.15 1.1" specular="0.4 0.4 0.4" castshadow="true"/>

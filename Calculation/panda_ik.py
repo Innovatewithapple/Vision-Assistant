@@ -360,3 +360,27 @@ class PandaIK:
 
         return q
 
+
+import numpy as np
+
+def drive_to_target(model, data, target_q, gripper_ctrl=None):
+    """
+    Call this once per simulation step. Pushes data.ctrl toward target_q
+    for the 7 arm joints (with gravity compensation), and optionally
+    sets the gripper's ctrl value too.
+
+    target_q: array of 7 joint angles (from ik.solve())
+    gripper_ctrl: optional scalar — gripper actuator value (e.g. 0=open, 255=closed).
+                  Pass None to leave the gripper untouched this step.
+    """
+    kp = model.actuator_gainprm[:7, 0]
+
+    corrected_ctrl = (
+        data.qfrc_bias[:7] / kp
+        + target_q
+    )
+
+    data.ctrl[:7] = corrected_ctrl
+
+    if gripper_ctrl is not None:
+        data.ctrl[7] = gripper_ctrl
