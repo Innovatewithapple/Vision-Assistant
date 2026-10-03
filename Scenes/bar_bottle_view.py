@@ -8,6 +8,8 @@ import mujoco
 import mujoco.viewer
 import math
 from testing.bar_operation import run_operation
+import numpy as np
+
 # ============================================================
 # PATHS
 # ============================================================
@@ -118,7 +120,7 @@ bottle_assets = f"""
 <mesh name="wine_bottle" file="{BOTTLE_OBJ}" scale="{BOTTLE_SCALE} {BOTTLE_SCALE} {BOTTLE_SCALE}"/>
 """
 
-N_BOTTLES = 1
+N_BOTTLES = 6
 random.seed(42)
 MIN_SPACING = 0.12
 
@@ -181,10 +183,46 @@ bin_assets = f"""
 
 BIN_POS = (1.3, 0.65, 0.25)
 
+BIN_POS = (1.3, 0.65, 0.25)
+BIN_FLOOR_T = 0.015        # thickness of the invisible floor collider (tune)
+BIN_WALL_T = 0.012         # thickness of the invisible wall colliders (tune)
+DEBUG_BIN_COLLIDERS = False  # True = show colliders in red so you can check them
+
+def _obj_vertices(path):
+    vs = []
+    with open(path) as f:
+        for line in f:
+            if line.startswith("v "):
+                p = line.split()
+                vs.append([float(p[1]), float(p[2]), float(p[3])])
+    return np.array(vs)
+
+# same transform MuJoCo applies: scale, then rotate 90 deg about x: (x, y, z) -> (x, -z, y)
+_v = _obj_vertices(BIN_OBJ) * BIN_SCALE
+_w = np.column_stack([_v[:, 0], -_v[:, 2], _v[:, 1]]) + np.array(BIN_POS)
+_lo, _hi = _w.min(0), _w.max(0)
+_c = (_lo + _hi) / 2
+_hx, _hy = (_hi[0] - _lo[0]) / 2, (_hi[1] - _lo[1]) / 2
+_H = _hi[2] - _lo[2]
+print(f"BIN bounds: x[{_lo[0]:.3f},{_hi[0]:.3f}] y[{_lo[1]:.3f},{_hi[1]:.3f}] z[{_lo[2]:.3f},{_hi[2]:.3f}]")
+
+_rgba = "1 0 0 0.3" if DEBUG_BIN_COLLIDERS else "0 0 0 0"
+_col = f'contype="1" conaffinity="1" friction="1.0 0.1 0.01" rgba="{_rgba}"'
+
 bin_geom = f"""
 <geom name="storage_bin_geom" type="mesh" mesh="storage_bin" material="bin_mat"
       pos="{BIN_POS[0]} {BIN_POS[1]} {BIN_POS[2]}" euler="{math.radians(90):.6f} 0 0"
       contype="0" conaffinity="0"/>
+<geom name="bin_floor_col" type="box" size="{_hx} {_hy} {BIN_FLOOR_T/2}"
+      pos="{_c[0]} {_c[1]} {_lo[2] + BIN_FLOOR_T/2}" {_col}/>
+<geom name="bin_wall_xm" type="box" size="{BIN_WALL_T/2} {_hy} {_H/2}"
+      pos="{_lo[0] + BIN_WALL_T/2} {_c[1]} {_lo[2] + _H/2}" {_col}/>
+<geom name="bin_wall_xp" type="box" size="{BIN_WALL_T/2} {_hy} {_H/2}"
+      pos="{_hi[0] - BIN_WALL_T/2} {_c[1]} {_lo[2] + _H/2}" {_col}/>
+<geom name="bin_wall_ym" type="box" size="{_hx} {BIN_WALL_T/2} {_H/2}"
+      pos="{_c[0]} {_lo[1] + BIN_WALL_T/2} {_lo[2] + _H/2}" {_col}/>
+<geom name="bin_wall_yp" type="box" size="{_hx} {BIN_WALL_T/2} {_H/2}"
+      pos="{_c[0]} {_hi[1] - BIN_WALL_T/2} {_lo[2] + _H/2}" {_col}/>
 """
 
 
@@ -201,7 +239,8 @@ panda_raw = re.sub(r'meshdir="[^"]*"', f'meshdir="{PANDA_ASSETS}"', panda_raw)
 m = re.search(r'<[^<>]*name="actuator8"[^<>]*>', panda_raw, re.S)
 if m:
     tag = m.group(0)
-    new_tag = re.sub(r'biasprm="[^"]*"', 'biasprm="0 -1000 -10"', tag)
+    # new_tag = re.sub(r'biasprm="[^"]*"', 'biasprm="0 -1000 -10"', tag)
+    new_tag = re.sub(r'biasprm="[^"]*"', 'biasprm="0 -2500 -25"', tag)
     new_tag = re.sub(r'gainprm="[^"]*"', 'gainprm="0.1568627451 0 0"', new_tag)
     panda_raw = panda_raw.replace(tag, new_tag)
 

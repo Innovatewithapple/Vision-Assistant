@@ -18,6 +18,54 @@ def set_truth(xy):
     global TRUTH_XY
     TRUTH_XY = np.array(xy)
 
+TRUTH_ALL = {}            # {"bottle_1": array([x, y]), ...}  true positions from the simulator
+MATCH_WARN_MM = 30.0      # farther than this from every real bottle = suspicious
+
+def set_truth_all(model, data):
+    """Snapshot the true XY of every bottle_N body in the scene."""
+    TRUTH_ALL.clear()
+    i = 1
+    while True:
+        bid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, f"bottle_{i}")
+        if bid < 0:
+            break
+        TRUTH_ALL[f"bottle_{i}"] = data.xpos[bid][:2].copy()
+        i += 1
+    print(f"Ground truth snapshot ({len(TRUTH_ALL)} bottles):")
+    for name, xy in TRUTH_ALL.items():
+        print(f"   sim {name}: X={xy[0]:.3f}, Y={xy[1]:.3f}")
+
+def nearest_truth(xy):
+    if not TRUTH_ALL:
+        return None, None, None
+    name = min(TRUTH_ALL, key=lambda n: np.linalg.norm(TRUTH_ALL[n] - xy))
+    return name, TRUTH_ALL[name], float(np.linalg.norm(TRUTH_ALL[name] - xy))
+
+def report_vs_truth(bottle_id, pos):
+    name, t, err = nearest_truth(np.asarray(pos[:2]))
+    if name is None:
+        return
+    flag = "" if err * 1000 < MATCH_WARN_MM else "   <-- no real bottle close by (ghost / bad estimate)"
+    print(f"    registered #{bottle_id} matches sim {name}: truth X={t[0]:.3f}, Y={t[1]:.3f}  err={err*1000:.1f} mm{flag}")
+
+def print_registration_report():
+    """Final table: every registered bottle vs its nearest real bottle, plus real bottles never detected."""
+    print("\n===== REGISTERED vs GROUND TRUTH =====")
+    used = {}
+    for bid, info in detected_bottles.items():
+        p = np.array(info["pos"])
+        name, t, err = nearest_truth(p[:2])
+        note = ""
+        if err * 1000 >= MATCH_WARN_MM:
+            note = "  <-- ghost?"
+        elif name in used:
+            note = f"  <-- duplicate of registered #{used[name]}"
+        used.setdefault(name, bid)
+        print(f"  #{bid}: est=({p[0]:.3f}, {p[1]:.3f})  sim {name} truth=({t[0]:.3f}, {t[1]:.3f})  err={err*1000:.1f} mm{note}")
+    missed = [n for n in TRUTH_ALL if n not in used]
+    print(f"  never detected: {missed if missed else 'none'}")
+    print("======================================\n")
+
 
 def disable_detection_and_get_bottles():
     """Call this once scanning is done. Freezes detection and returns
@@ -26,6 +74,7 @@ def disable_detection_and_get_bottles():
     for bottle_id, info in detected_bottles.items():
         x, y, z = info["pos"]
         print(f"FINAL bottle_{bottle_id} (used for approach): X={x:.3f}, Y={y:.3f}, Z={z:.3f}")
+    print_registration_report()
     return detected_bottles
 
 
