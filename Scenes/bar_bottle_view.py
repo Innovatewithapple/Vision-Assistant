@@ -140,8 +140,11 @@ for i in range(1, N_BOTTLES + 1):
     <body name="bottle_{i}" pos="{x:.3f} {y:.3f} {spawn_z:.3f}" euler="0 0 {yaw:.1f}">
         <freejoint/>
         <geom name="bottle_{i}_geom" type="mesh" mesh="wine_bottle" material="wine_bottle_material"
-              mass="0.3" friction="2.0 0.1 0.01"
-              contype="1" conaffinity="1"/>
+              mass="0.0001" contype="0" conaffinity="0"/>
+        <geom type="cylinder" fromto="0 0 0 0 0 0.20"    size="0.0368" mass="0.22" friction="2.0 0.1 0.01" rgba="0 0 0 0"/>
+        <geom type="cylinder" fromto="0 0 0.20 0 0 0.22" size="0.030"  mass="0.03" friction="2.0 0.1 0.01" rgba="0 0 0 0"/>
+        <geom type="cylinder" fromto="0 0 0.22 0 0 0.24" size="0.019"  mass="0.02" friction="2.0 0.1 0.01" rgba="0 0 0 0"/>
+        <geom type="cylinder" fromto="0 0 0.24 0 0 0.30" size="0.0148" mass="0.03" friction="2.0 0.1 0.01" rgba="0 0 0 0"/>
     </body>
     """
 
@@ -232,11 +235,11 @@ panda_equality_block  = block_to_string(root.find("equality"))
 panda_contact_block   = block_to_string(root.find("contact"))
 panda_sensor_block    = block_to_string(root.find("sensor"))
 
-ROBOT_POS = (0.70, 0.58, 0)
+ROBOT_POS = (0.63, 0.59, 0)
 panda_worldbody_wrapped = (
     f'<body name="panda_base" '
     f'pos="{ROBOT_POS[0]} {ROBOT_POS[1]} {ROBOT_POS[2]}" '
-    f'euler="0 0 {math.radians(90):.6f}">'
+    f'euler="0 0 {math.radians(180):.6f}">'
     f'{panda_worldbody_block}'
     f'</body>'
 )
@@ -249,7 +252,7 @@ panda_worldbody_wrapped = (
 XML = f"""
 <mujoco>
 
-  <option cone="elliptic" impratio="10" noslip_iterations="5"/>
+  <option integrator="implicitfast" cone="elliptic" impratio="10" noslip_iterations="5"/>
 
   {panda_compiler_block}
   {panda_default_block}

@@ -6,7 +6,7 @@ from Calculation.panda_ik import PandaIK
 
 BOTTLE_RADIUS = 0.0368 - 0.005
 BOTTLE_HEIGHT = 0.30
-APPROACH_CLEARANCE = 0.30
+APPROACH_CLEARANCE = 0.10
 REGISTER_MATCH_RADIUS = 0.05   # meters — how close a new reading must be to count as "same bottle"
 detected_bottles = {}   # key: bottle_id (int, 0,1,2...), value: {"pos": [x,y,z], "confirmed": True}
 detection_enabled = True
@@ -112,7 +112,7 @@ def Draw_Segmentation(frame, boxes, labels, scores, mask, track_ids, class_names
                 continue
 
             world_position = Calculate_World_Position(polygon, model, data)
-            if not (0.20 <= world_position[1] <= 0.32):   
+            if not (0.20 <= world_position[1] <= 0.35):
                 # print("Ghost bottle Detected!!!")
                 continue
             if TRUTH_XY is not None:
