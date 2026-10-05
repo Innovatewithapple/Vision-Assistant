@@ -50,6 +50,8 @@ def report_vs_truth(bottle_id, pos):
 
 def print_registration_report():
     """Final table: every registered bottle vs its nearest real bottle, plus real bottles never detected."""
+    if not TRUTH_ALL:
+        return
     print("\n===== REGISTERED vs GROUND TRUTH =====")
     used = {}
     for bid, info in detected_bottles.items():
@@ -164,25 +166,23 @@ def Draw_Segmentation(frame, boxes, labels, scores, mask, track_ids, class_names
             if not (0.20 <= world_position[1] <= 0.35):
                 # print("Ghost bottle Detected!!!")
                 continue
-            if TRUTH_XY is not None:
+            if TRUTH_ALL:
                 global _last_print_cam
                 cam_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_CAMERA, "wrist_camera")
                 cam_pos = data.cam_xpos[cam_id].copy()
                 if _last_print_cam is None or np.linalg.norm(cam_pos - _last_print_cam) > 0.01:
                     _last_print_cam = cam_pos
-                    diff = world_position[:2] - TRUTH_XY
-                    view = (TRUTH_XY - cam_pos[:2]) / np.linalg.norm(TRUTH_XY - cam_pos[:2])
-                    along = float(np.dot(diff, view)) * 1000                      # + = estimate too far from camera
-                    across = float(diff[0] * -view[1] + diff[1] * view[0]) * 1000  # sideways error
+                    name, t, err = nearest_truth(world_position[:2])
                     print(f"pose cam=({cam_pos[0]:.2f},{cam_pos[1]:.2f},{cam_pos[2]:.2f}) "
-                        f"est=({world_position[0]:.3f},{world_position[1]:.3f}) "
-                        f"truth=({TRUTH_XY[0]:.3f},{TRUTH_XY[1]:.3f}) "
-                        f"err={np.linalg.norm(diff)*1000:.1f} mm  along={along:+.1f}  across={across:+.1f}")
+                          f"est=({world_position[0]:.3f},{world_position[1]:.3f}) "
+                          f"nearest sim {name}=({t[0]:.3f},{t[1]:.3f}) err={err*1000:.1f} mm")
             bottle_id, is_new = register_bottle(world_position)
 
             if is_new:
                 print(f"Registered bottle_{bottle_id}: "
                       f"X={world_position[0]:.3f}, Y={world_position[1]:.3f}, Z={world_position[2]:.3f}")
+                report_vs_truth(bottle_id, world_position)
+                print_registration_report()
 
             color = colors[bottle_id % len(colors)]
 

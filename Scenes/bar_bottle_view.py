@@ -241,7 +241,7 @@ if m:
     tag = m.group(0)
     # new_tag = re.sub(r'biasprm="[^"]*"', 'biasprm="0 -1000 -10"', tag)
     new_tag = re.sub(r'biasprm="[^"]*"', 'biasprm="0 -2500 -25"', tag)
-    new_tag = re.sub(r'gainprm="[^"]*"', 'gainprm="0.1568627451 0 0"', new_tag)
+    new_tag = re.sub(r'gainprm="[^"]*"', 'gainprm="0.3921568627 0 0"', new_tag)
     panda_raw = panda_raw.replace(tag, new_tag)
 
 # wrist camera
@@ -377,6 +377,6 @@ if __name__ == "__main__":
         width=IMAGE_WIDTH
     )
 
-    with mujoco.viewer.launch_passive(model, data) as viewer:
+    with mujoco.viewer.launch_passive(model, data, show_left_ui=True, show_right_ui=True) as viewer:
 
         run_operation(model, data, viewer,renderer)

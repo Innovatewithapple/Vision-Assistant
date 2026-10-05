@@ -10,7 +10,7 @@ PRE_BACKOFF = 0.12       # m: pre-grasp pose is this far back from the bottle, t
 STEP_LEN = 0.06          # m: spacing of waypoints while sliding in and lifting
 LIFT_HEIGHT = 0.10       # m: how far to lift the bottle
 GRIPPER_OPEN = 255
-GRIPPER_CLOSED = 0
+GRIPPER_CLOSED = 70
 POS_TOL = 0.003          # m: a planned pose must be this accurate or planning fails
 ROT_TOL_DEG = 1.0
 
@@ -130,7 +130,7 @@ SLOT_FILL_ORDER = "far_first"   # "far_first": far row first (the arm never reac
 BOTTLE_HEIGHT_M = 0.30
 SLOT_SPREAD = 1.0               # 1.0 = bottles go right into the corners; 0.5 = halfway between the corners and the bin center
 SLOT_MARGIN_DEPTH = 0.075       # m: closest the bottle AXIS may get to the far/near wall (bottle radius 0.037 + 1.3 cm)
-SLOT_MARGIN_LATERAL = 0.075     # m: closest the axis may get to the left/right walls (smaller = pairs spread further apart)
+SLOT_MARGIN_LATERAL = 0.057     # m: closest the axis may get to the left/right walls (smaller = pairs spread further apart)
  
 # ---- direct control: move the slots yourself (all in meters) ----
 SLOT_PITCH_DEPTH = None         # distance between the far row and the near row (center to center). None = from the margins above
@@ -219,22 +219,41 @@ def _pose(axis_xy, z, psi, off, flip):
     return tgt, side_orientation(d, flip)
  
  
-def _try_variant(model, data, ik, q_start, A0, C, z0, carry_z, place_z, psi0, dpsi, flip, off):
-    """Rise -> carry (turning the hand while moving) -> descend. Returns (path, last_pose, None) or (None, None, why)."""
+PULL_BACK_TRIES = (0.0, 0.05, 0.10, 0.15, 0.20, 0.25, 0.30)   # m: pull-back distances tried, smallest first
+BOTTLE_CLEAR_DIST = 0.10   # m: held-bottle axis must stay this far from the axis of every other bottle
+
+
+def _seg_dist(p, a, b):
+    """Distance from point p to the segment a-b (2D)."""
+    ab = b - a
+    L2 = float(np.dot(ab, ab))
+    t = 0.0 if L2 < 1e-12 else min(max(float(np.dot(p - a, ab)) / L2, 0.0), 1.0)
+    return float(np.linalg.norm(p - (a + t * ab)))
+
+
+def _try_variant(model, data, ik, q_start, A0, V, C, z0, carry_z, place_z, psi0, dpsi, flip, off):
+    """Rise -> pull back to V -> carry to C (turning the hand while moving) -> descend.
+    Returns (path, last_pose, None, False) or (None, None, why, failed_in_rise_or_pullback)."""
     poses = []
     if carry_z - z0 > 1e-6:
         n = int(np.ceil((carry_z - z0) / CARRY_STEP))
         for k in range(1, n + 1):
             poses.append(_pose(A0, z0 + (carry_z - z0) * k / n, psi0, off, flip))
-    dist = np.linalg.norm(C - A0)
+    dv = float(np.linalg.norm(V - A0))
+    if dv > 1e-6:                                    # pull back, hand keeps pointing the same way
+        n_v = int(np.ceil(dv / CARRY_STEP))
+        for k in range(1, n_v + 1):
+            poses.append(_pose(A0 + (V - A0) * k / n_v, carry_z, psi0, off, flip))
+    n_prefix = len(poses)
+    dist = np.linalg.norm(C - V)
     n_h = max(1, int(np.ceil(dist / CARRY_STEP)), int(np.ceil(abs(dpsi) / MAX_YAW_STEP)))
     for k in range(1, n_h + 1):
         s = k / n_h
-        poses.append(_pose(A0 + (C - A0) * s, carry_z, psi0 + dpsi * s, off, flip))
+        poses.append(_pose(V + (C - V) * s, carry_z, psi0 + dpsi * s, off, flip))
     n_d = max(1, int(np.ceil((carry_z - place_z) / CARRY_STEP)))
     for k in range(1, n_d + 1):
         poses.append(_pose(C, carry_z + (place_z - carry_z) * k / n_d, psi0 + dpsi, off, flip))
- 
+
     q = q_start
     path = []
     for k, (tgt, R) in enumerate(poses, 1):
@@ -244,33 +263,35 @@ def _try_variant(model, data, ik, q_start, A0, C, z0, carry_z, place_z, psi0, dp
                                        iterations=5000, step=0.2, damping=0.03)
         q = q_new
         if pe > POS_TOL or re > ROT_TOL_DEG:
-            return None, None, (f"step {k}/{len(poses)} at {tgt.round(3)}: pos_err={pe*1000:.1f} mm tilt_err={re:.1f} deg")
+            return None, None, (f"step {k}/{len(poses)} at {tgt.round(3)}: pos_err={pe*1000:.1f} mm "
+                                f"tilt_err={re:.1f} deg"), k <= n_prefix
         path.append((q, tgt, GRIPPER_CLOSED))
-    return path, (q, poses[-1][0], poses[-1][1]), None
- 
- 
-def plan_place(model, data, ik, q_start, start_target, R_des, off, bottle_base_z, slot_index=0):
-    """Plan: rise -> carry over the bin while turning the hand to point outward -> descend -> release -> retreat.
+    return path, (q, poses[-1][0], poses[-1][1]), None, False
+
+
+def plan_place(model, data, ik, q_start, start_target, R_des, off, bottle_base_z, slot_index=0, obstacles=None):
+    """Plan: rise -> pull back from the counter row -> carry over the bin while turning the hand -> descend
+    -> release -> retreat. `obstacles` = xy of the other bottles still standing on the counter.
     Returns (carry_path, retreat_path) with entries (joint targets, finger target, gripper command), or None."""
     info = bin_info(model)
     if info is None:
         print("[place] bin colliders not found in the model")
         return None
     C, floor_top, rim = info
- 
+
     base_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "panda_base")
     base_xy = data.xpos[base_id][:2].copy()
- 
+
     slots = slot_centers(model, base_xy)
     C = slots[slot_index % len(slots)]
     print(f"[place] slot {slot_index % len(slots) + 1}/{len(slots)} ({SLOT_FILL_ORDER}) -> {C.round(3)}")
- 
+
     start = np.asarray(start_target, float)
     d0 = R_des[:2, 2] / np.linalg.norm(R_des[:2, 2])
     psi0 = float(np.arctan2(d0[1], d0[0]))
     flip = bool(R_des[2, 0] > 0)                      # hand x up <=> flip=True in side_orientation
     A0 = start[:2] + off * d0                         # bottle axis while held
- 
+
     b2f = SIDE_GRASP_Z - bottle_base_z                # finger height above the bottle base
     carry_z = max(start[2], rim + BOTTLE_BASE_CLEAR + b2f, rim + HAND_CLEAR)
     if slot_index > 0 and SLOT_FILL_ORDER == "near_first":      # must clear the bottles already standing in the bin
@@ -279,7 +300,23 @@ def plan_place(model, data, ik, q_start, start_target, R_des, off, bottle_base_z
     drop = place_z - b2f - floor_top
     print(f"[place] bin target {C.round(3)}  floor top z={floor_top:.3f}  rim z={rim:.3f}")
     print(f"[place] carry z={carry_z:.3f}  place z={place_z:.3f}  drop height={drop*100:.1f} cm")
- 
+
+    # ---- pull-back candidates: go back toward the robot, away from the bottles on the counter ----
+    others = [np.asarray(o, float)[:2] for o in (obstacles or [])]
+    back = base_xy - A0
+    back = back / np.linalg.norm(back)
+    vias = []
+    for pull in PULL_BACK_TRIES:
+        V = A0 + back * pull
+        clear = min([min(_seg_dist(o, A0, V), _seg_dist(o, V, C)) for o in others], default=99.0)
+        if clear >= BOTTLE_CLEAR_DIST:
+            vias.append((pull, V))
+    if not vias:
+        print("[place] no pull-back distance keeps the held bottle clear of the other bottles")
+        return None
+    print(f"[place] {len(others)} other bottles on the counter; trying pull-backs "
+          f"{[round(p * 100) for p, _ in vias]} cm")
+
     psi_out = float(np.arctan2(*(C - base_xy)[::-1]))  # hand pointing from the robot base toward the bin
     variants = []
     for extra in PLACE_EXTRA_DROP:
@@ -292,25 +329,31 @@ def plan_place(model, data, ik, q_start, start_target, R_des, off, bottle_base_z
                 psi1 = psi_out + np.radians(off_deg)
                 ds = _wrap(psi1 - psi0)
                 variants.append((extra, psi1, "long way", ds - np.sign(ds) * 2 * np.pi if ds != 0 else 2 * np.pi))
- 
+
     winner = None
-    for extra, psi1, name, dpsi in variants:
-        path, last, why = _try_variant(model, data, ik, q_start, A0, C, start[2],
-                                       carry_z, place_z + extra, psi0, dpsi, flip, off)
-        label = (f"final yaw {np.degrees(psi1):6.1f} deg, {name}, turn {np.degrees(dpsi):6.1f} deg, "
-                 f"drop {(drop + extra)*100:.0f} cm")
-        if path is not None:
-            print(f"[place] {label}: OK")
-            winner = (path, last, psi0 + dpsi)
+    for pull, V in vias:
+        last_why = None
+        for extra, psi1, name, dpsi in variants:
+            path, last, why, early = _try_variant(model, data, ik, q_start, A0, V, C, start[2],
+                                                  carry_z, place_z + extra, psi0, dpsi, flip, off)
+            if path is not None:
+                print(f"[place] pull-back {pull*100:.0f} cm, final yaw {np.degrees(psi1):6.1f} deg, {name}, "
+                      f"turn {np.degrees(dpsi):6.1f} deg, drop {(drop + extra)*100:.0f} cm: OK")
+                winner = (path, last, psi0 + dpsi)
+                break
+            last_why = why
+            if early:          # the rise / pull-back itself is unreachable: every yaw would fail the same way
+                break
+        if winner:
             break
-        print(f"[place] {label}: failed at {why}")
+        print(f"[place] pull-back {pull*100:.0f} cm: no variant worked (last: {last_why})")
     if winner is None:
         print("[place] no carry variant worked")
         return None
- 
+
     carry_path, (q, tgt_end, R_end), psi_f = winner
     d_f = _dir(psi_f)
- 
+
     retreat_path = []
     n = int(np.ceil(RETREAT_DIST / CARRY_STEP))
     for k in range(1, n + 1):
@@ -321,7 +364,7 @@ def plan_place(model, data, ik, q_start, start_target, R_des, off, bottle_base_z
             print(f"[place] retreat step {k}/{n} failed: pos_err={pe*1000:.1f} mm tilt_err={re:.1f} deg")
             return None
         retreat_path.append((q, tgt, GRIPPER_OPEN))
- 
+
     print(f"[place] OK: {len(carry_path)} carry waypoints, {len(retreat_path)} retreat waypoints")
     return carry_path, retreat_path
  
@@ -330,7 +373,7 @@ def plan_place(model, data, ik, q_start, start_target, R_des, off, bottle_base_z
 # SMOOTH TRAJECTORY (use this instead of waypoint-by-waypoint driving while carrying)
 # ============================================================
 CARRY_JOINT_SPEED = 1.1    # rad/s: cruise speed of the joint that moves most (lower = gentler)
-CARRY_RAMP_TIME = 0.7      # s: time to speed up from rest / slow down to rest (shorter = snappier start)
+CARRY_RAMP_TIME = 0.4      # s: time to speed up from rest / slow down to rest (shorter = snappier start)
  
  
 class SmoothTrajectory:
