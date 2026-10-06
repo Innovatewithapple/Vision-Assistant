@@ -1,21 +1,30 @@
 import cv2
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from YOLO.segmentation import Segmentation
 from YOLO.draw_detection import draw_detection
 
 
 # ============================================================
-# IMAGE
+# VIDEO
 # ============================================================
 
-image_path = "Video/Images/bottlec.png"
+video_path = "Video/streetwalkinghd.mp4"     # <- must be a video file (.mp4), not .mp3
 
-frame = cv2.imread(image_path)
-
-if frame is None:
+if not Path(video_path).exists():
+    folder = Path(video_path).parent
+    found = sorted(p.name for p in folder.glob("*")) if folder.exists() else "folder not found"
     raise FileNotFoundError(
-        f"Could not load image: {image_path}"
+        f"Could not find: {video_path}\n"
+        f"Files in '{folder}': {found}"
     )
+
+cap = cv2.VideoCapture(video_path)
+
+if not cap.isOpened():
+    raise FileNotFoundError(f"Could not open video: {video_path}")
 
 
 # ============================================================
@@ -26,57 +35,52 @@ segmentor = Segmentation()
 
 
 # ============================================================
-# RUN SEGMENTATION
+# RUN ON EVERY FRAME
 # ============================================================
 
-boxes, labels, scores, masks, track_ids, class_names = segmentor.segment(
-    frame=frame
-)
+frame_count = 0
 
+while True:
+    ok, frame = cap.read()
+    if not ok:                      # end of video
+        break
 
-print("Number of detections:", len(boxes))
-print("Track IDs:", track_ids)
+    frame_count += 1
 
-
-# ============================================================
-# DRAW DETECTIONS
-# ============================================================
-
-for box, label, score in zip(
-    boxes,
-    labels,
-    scores
-):
-
-    if score < 0.5:
-        continue
-
-    x1, y1, x2, y2 = box.int().tolist()
-
-    class_name = class_names[int(label)]
-
-    print(
-        f"Detected: {class_name} "
-        f"| Confidence: {float(score):.2f}"
+    boxes, labels, scores, masks, track_ids, class_names = segmentor.segment(
+        frame=frame
     )
 
-    frame = draw_detection(
-        frame=frame,
-        box=(x1, y1, x2, y2),
-        class_name=class_name,
-        score=float(score)
-    )
+    if frame_count % 30 == 0:       # a short status line twice a second, not every frame
+        print(f"frame {frame_count}: {len(boxes)} detections, track IDs: {track_ids}")
+
+    # ------------------------------------------------------------
+    # DRAW DETECTIONS
+    # ------------------------------------------------------------
+    for box, label, score in zip(boxes, labels, scores):
+
+        if score < 0.5:
+            continue
+
+        x1, y1, x2, y2 = box.int().tolist()
+
+        class_name = class_names[int(label)]
+
+        frame = draw_detection(
+            frame=frame,
+            box=(x1, y1, x2, y2),
+            class_name=class_name,
+            score=float(score)
+        )
+
+    # ------------------------------------------------------------
+    # DISPLAY  (press q to quit)
+    # ------------------------------------------------------------
+    cv2.imshow("Video Detection", frame)
+
+    if cv2.waitKey(1) & 0xFF == ord("q"):
+        break
 
 
-# ============================================================
-# DISPLAY
-# ============================================================
-
-cv2.imshow(
-    "Image Detection",
-    frame
-)
-
-cv2.waitKey(0)
-
+cap.release()
 cv2.destroyAllWindows()

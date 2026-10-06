@@ -1,6 +1,7 @@
 import mujoco
 import numpy as np
 import cv2
+import time
 from YOLO.segmentation import Segmentation
 from Visualisation.visualisation import (
     Draw_Segmentation, disable_detection_and_get_bottles, detected_bottles,
@@ -18,15 +19,24 @@ segmentor = Segmentation()
 # ============================================================
 # SCAN POSES  (tune these)
 # Each pose is held until the camera has registered `need` bottles in total
-# (or until SCAN_MAX_HOLD steps pass), then the arm moves to the next pose.
+# (waiting SCAN_AFTER_FOUND_SECONDS after that), or until SCAN_MAX_SECONDS pass,
+# then the arm moves to the next pose.  Times are real (wall-clock) seconds.
 # ctrl = actuator1..7 (joint targets), actuator8 (gripper, 255 = open)
 # ============================================================
 SCAN_POSES = [
     dict(ctrl=np.array([2.00, -0.494, 0, -0.1, 0, 0.793, 0, 255]), need=2),   # first two bottles
     dict(ctrl=np.array([2.64, -0.494, 0, -0.1, 0, 0.793, 0, 255]), need=4),   # remaining two bottles
 ]
-SCAN_MIN_HOLD = 300      # steps (~0.6 s) the arm must sit still at a scan pose before moving on
-SCAN_MAX_HOLD = 1500     # steps (~3 s): move on even if the expected bottles were not all seen
+SCAN_MAX_SECONDS = 10.0          # most time spent at one scan pose; then move on with whatever was found
+SCAN_AFTER_FOUND_SECONDS = 5.0   # once the expected bottles are registered, keep looking this long, then move on
+SCAN_SEGMENT_EVERY = 10          # while scanning, run the camera + YOLO only every N sim steps
+                                 # (the scene is still, and YOLO on every step is what makes scanning slow)
+
+# ============================================================
+# RETURN SPEED  (tune this)
+# ============================================================
+EMPTY_JOINT_SPEED = 2.0   # rad/s: ONLY the retreat + home moves after releasing a bottle (arm is empty).
+                          # Carrying a bottle still uses CARRY_JOINT_SPEED. 1.1 = old speed.
 
 # ============================================================
 # GRASP SETTINGS  (tune these)
@@ -118,6 +128,10 @@ def run_operation(model, data, viewer, renderer):
     phase = "scan"
     scan_idx = 0
     settle_counter = 0
+    scan_t0 = 0.0           # wall-clock time the arm arrived at the current scan pose
+    found_t = None          # wall-clock time the expected bottles were all registered
+    loop_i = 0
+    display_frame = None
 
     queue = []              # registered bottle ids still to be moved
     n_total = 0
@@ -133,20 +147,26 @@ def run_operation(model, data, viewer, renderer):
     release_steps = 0
     traj = None
     traj_steps = 0
+    wp_key = None           # which waypoint wp_reach belongs to
+    wp_reach = None         # where the fingers end up at that waypoint's joint targets
 
     while viewer.is_running():
         mujoco.mj_step(model, data)
 
-        renderer.update_scene(data, camera='wrist_camera')
-        wrist_frame = np.asarray(renderer.render())
-        wrist_frame_bgr = cv2.cvtColor(wrist_frame, cv2.COLOR_RGB2BGR)
+        loop_i += 1
+        scanning = phase == "scan" and settle_counter > 0
 
-        # detect only while the arm is holding still at a scan pose (no readings while it is moving)
-        if phase == "scan" and settle_counter > 0:
-            boxes, labels, scores, mask, track_ids, class_names = segmentor.segment(frame=wrist_frame_bgr)
-            wrist_frame_bgr = Draw_Segmentation(wrist_frame_bgr, boxes, labels, scores, mask, track_ids,
-                                                class_names, model, data)
-        display_frame = cv2.cvtColor(wrist_frame_bgr, cv2.COLOR_BGR2RGB)
+        # while holding still at a scan pose, look only every SCAN_SEGMENT_EVERY steps
+        if (not scanning) or display_frame is None or loop_i % SCAN_SEGMENT_EVERY == 0:
+            renderer.update_scene(data, camera='wrist_camera')
+            wrist_frame = np.asarray(renderer.render())
+            wrist_frame_bgr = cv2.cvtColor(wrist_frame, cv2.COLOR_RGB2BGR)
+
+            if scanning:
+                boxes, labels, scores, mask, track_ids, class_names = segmentor.segment(frame=wrist_frame_bgr)
+                wrist_frame_bgr = Draw_Segmentation(wrist_frame_bgr, boxes, labels, scores, mask, track_ids,
+                                                    class_names, model, data)
+            display_frame = cv2.cvtColor(wrist_frame_bgr, cv2.COLOR_BGR2RGB)
 
         is_wrist = (
             viewer.cam.type == mujoco.mjtCamera.mjCAMERA_FIXED
@@ -171,18 +191,32 @@ def run_operation(model, data, viewer, renderer):
             joint_err[3] = 0          # joint 4 sits at its limit, ignore it
             settle_counter = settle_counter + 1 if joint_err.max() < 0.05 else 0
 
-            found = len(detected_bottles)
-            if settle_counter >= SCAN_MIN_HOLD and (found >= pose["need"] or settle_counter >= SCAN_MAX_HOLD):
-                print(f"Scan pose {scan_idx + 1}/{len(SCAN_POSES)} done: {found} bottles registered so far "
-                      f"(expected {pose['need']}).")
-                scan_idx += 1
-                settle_counter = 0
-                if scan_idx >= len(SCAN_POSES):
-                    disable_detection_and_get_bottles()
-                    queue = list(detected_bottles.keys())
-                    n_total = len(queue)
-                    print(f"Scan complete. {n_total} bottles to move.")
-                    phase = "next_bottle"
+            if settle_counter == 1:                      # arm just arrived and is holding still
+                scan_t0 = time.perf_counter()
+                found_t = None
+
+            if settle_counter > 0:
+                now = time.perf_counter()
+                found = len(detected_bottles)
+                if found >= pose["need"] and found_t is None:
+                    found_t = now                        # all expected bottles are registered
+                waited = now - scan_t0
+
+                all_found_and_waited = found_t is not None and now - found_t >= SCAN_AFTER_FOUND_SECONDS
+                timed_out = waited >= SCAN_MAX_SECONDS
+
+                if all_found_and_waited or timed_out:
+                    why = "expected bottles found" if all_found_and_waited else "time limit"
+                    print(f"Scan pose {scan_idx + 1}/{len(SCAN_POSES)} done after {waited:.1f}s ({why}): "
+                          f"{found} bottles registered so far (expected {pose['need']}).")
+                    scan_idx += 1
+                    settle_counter = 0
+                    if scan_idx >= len(SCAN_POSES):
+                        disable_detection_and_get_bottles()
+                        queue = list(detected_bottles.keys())
+                        n_total = len(queue)
+                        print(f"Scan complete. {n_total} bottles to move.")
+                        phase = "next_bottle"
 
         elif phase == "next_bottle":
             if not queue:
@@ -222,12 +256,23 @@ def run_operation(model, data, viewer, renderer):
             drive_to_target(model, data, q_wp, gripper_ctrl=grip)
             wp_steps += 1
 
+            # Once per waypoint: where will the fingers really be at these joint targets?
+            # (the planner's IK can be a few mm off the ideal target; the arm cannot do better than that)
+            if wp_key != (cur_id, phase, idx):
+                wp_key = (cur_id, phase, idx)
+                saved_q = data.qpos[arm_qpos].copy()
+                data.qpos[arm_qpos] = q_wp
+                mujoco.mj_kinematics(model, data)
+                wp_reach = (data.xpos[ik.left_finger_id] + data.xpos[ik.right_finger_id]) / 2
+                data.qpos[arm_qpos] = saved_q
+                mujoco.mj_kinematics(model, data)
+
             center = (data.xpos[ik.left_finger_id] + data.xpos[ik.right_finger_id]) / 2
             still = np.abs(data.qvel[arm_dofs]).max() < SETTLED_VEL
 
             last = idx == len(wp_list) - 1
             strict = (last and phase != "lift") or (phase == "go_in" and idx == 0)
-            dist = np.linalg.norm(center - tgt)
+            dist = np.linalg.norm(center - wp_reach)      # distance to the planned pose (not the ideal target)
             reached = (dist < WAYPOINT_TOL and still) if strict else (dist < 0.010)
 
             if reached:
@@ -246,7 +291,9 @@ def run_operation(model, data, viewer, renderer):
                         grip_report(model, data, "after lift", cur_name)
                         phase = "carry"
             elif wp_steps > 2500:
-                print(f"{phase}: waypoint {idx + 1} timed out - stopping.")
+                print(f"{phase}: waypoint {idx + 1} timed out - stopping.  "
+                      f"(distance to planned pose {dist * 1000:.1f} mm, "
+                      f"arm speed {np.abs(data.qvel[arm_dofs]).max():.3f} rad/s)")
                 phase = "idle"
 
         elif phase == "close":
@@ -268,7 +315,7 @@ def run_operation(model, data, viewer, renderer):
                 if phase == "carry":
                     traj = SmoothTrajectory([w[0] for w in carry_path], CARRY_JOINT_SPEED, q_first=lift_path[-1][0])
                 else:
-                    traj = SmoothTrajectory([w[0] for w in retreat_path], CARRY_JOINT_SPEED, q_first=carry_path[-1][0])
+                    traj = SmoothTrajectory([w[0] for w in retreat_path], EMPTY_JOINT_SPEED, q_first=carry_path[-1][0])
                 traj_steps = 0
                 print(f"{phase}: smooth trajectory, {traj.T:.1f} s")
 
@@ -311,7 +358,7 @@ def run_operation(model, data, viewer, renderer):
         elif phase == "home":
             # smooth move back to the first scan pose before planning the next bottle
             if traj is None:
-                traj = SmoothTrajectory([HOME_Q], CARRY_JOINT_SPEED, q_first=data.qpos[arm_qpos].copy())
+                traj = SmoothTrajectory([HOME_Q], EMPTY_JOINT_SPEED, q_first=data.qpos[arm_qpos].copy())
                 traj_steps = 0
                 print(f"home: smooth trajectory, {traj.T:.1f} s")
             drive_to_target(model, data, traj.q_at(traj_steps * dt), gripper_ctrl=GRIPPER_OPEN)
