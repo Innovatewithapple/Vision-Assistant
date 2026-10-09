@@ -2,7 +2,7 @@ from ultralytics import YOLO
 
 class Segmentation:
     def __init__(self):
-        self.model = YOLO("yolo26s-seg.pt")
+        self.model = YOLO("yolo26n-seg.pt")
 
     def segment(self,frame):
         results = self.model.track(frame,persist=True,tracker="bytetrack.yaml",verbose=False,device='mps')
@@ -32,4 +32,19 @@ colors = [
     (100, 255, 255),     # Soft Cyan
     (255, 140, 140),     # Soft Coral
     (200, 160, 255),     # Soft Violet
+]
+
+color_names = [
+    "Green",       # (77, 255, 77)
+    "Pink",        # (180, 120, 255)
+    "Blue",        # (255, 100, 100)
+    "Orange",      # (100, 180, 255)
+    "Sky Blue",    # (255, 220, 100)
+    "Lime",        # (100, 255, 220)
+    "Cornflower",  # (255, 160, 100)
+    "Purple",      # (255, 120, 200)
+    "Mint",        # (180, 255, 100)
+    "Yellow",      # (100, 255, 255)
+    "Lavender",    # (255, 140, 140)
+    "Light Pink",  # (200, 160, 255)
 ]
