@@ -5,6 +5,7 @@ import math
 from Visualisation.Info_Panel import stat, draw_stats_panel, tick_fps, rounded_rect,WHITE, GREEN, BLUE, YELLOW, ORANGE, RED
 import time
 
+
 allowed_objects = ['person']
 font = cv2.FONT_HERSHEY_SIMPLEX   # Standard clean OpenCV font style
 font_scale = 0.5                  # Font size (0.5 is compact and readable)
@@ -96,6 +97,7 @@ def Draw_Segment_Around(boxes,labels,class_names,frame,track_ids,scores,mask,dis
                           "horizontal_m":lateral_m,
                           "forward_depth":forward_depth,
                           "feet_cut": bool(ys.max() >= frame.shape[0] - 6),
+                          "box": (x1, y1, x2, y2),
                          "side": side_of(h=lateral_m)}
                 people.append(person)
                 history.setdefault(track_id,[]).append(person)
@@ -104,17 +106,15 @@ def Draw_Segment_Around(boxes,labels,class_names,frame,track_ids,scores,mask,dis
                 person["closing"] = closing
                 person["motion"] = motion
                 person["ttc"] = ttc
-                # if track_id in (7, 8):
-                #     c = f"{closing:.1f}" if closing is not None else "None"
-                #     print(f"id={track_id} dist={distance:.1f} closing={c}")
                 t_cpa, miss = get_cpa(track_id, now)
                 person["t_cpa"] = t_cpa
                 person["miss"] = miss
                 update_threat(track_id, person, now)
-                # if person["threat"]:
-                #     print(f'THREAT id={track_id} dist={distance:.1f} t_cpa={person["t_cpa_shown"]:.1f} miss={person["miss"]}')
-                # if zone != old_zone:
-                #     print(f"{track_id} ({color_name}): {old_zone} -> {zone} at {distance:.1f} m")
+                print(f"id={track_id} dist={distance:.2f} h={lateral_m:.2f} t_cpa={t_cpa} miss={miss} threat={person['threat']}")
+                if person["threat"]:
+                    print(f'THREAT id={track_id} dist={distance:.1f} t_cpa={person["t_cpa_shown"]:.1f} miss={person["miss"]}')
+                if zone != old_zone:
+                    print(f"{track_id} ({color_name}): {old_zone} -> {zone} at {distance:.1f} m")
 
                 label_x = (x1 + x2) / 2.0
                 label_y = ys.min() + 0.3 * pixel_height
@@ -127,11 +127,6 @@ def Draw_Segment_Around(boxes,labels,class_names,frame,track_ids,scores,mask,dis
     #----Check and delete history if person disappear and in history for more then 2 seconds---@
     before_ids = list(history.keys())          # snapshot before removal
     removed = remove_ids_from_history(now=now)
-
-    # if removed:
-    #     print(f"Removed: {removed}")
-    #     print(f"Before: {before_ids}")
-    #     print(f"After:  {list(history.keys())}")
 
     # ---- panel: OUTSIDE the if and the for, once per frame ----
     dists = [p["distance"] for p in people]
@@ -160,7 +155,8 @@ def Draw_Segment_Around(boxes,labels,class_names,frame,track_ids,scores,mask,dis
     else:
         ttc_text, ttc_color = "", ORANGE
 
-    run_early_monitor(people, now)
+    #want the slow case visible on the panel, add a plain row that always shows the soonest
+    nxt = min((p for p in people if p["t_cpa"] is not None), key=lambda p: p["t_cpa"], default=None)
 
     stats = [
         stat("State", state, "badge", state_col),
@@ -171,6 +167,7 @@ def Draw_Segment_Around(boxes,labels,class_names,frame,track_ids,scores,mask,dis
         stat("Impact", ", ".join(danger_ids), "badge", RED, only_if=bool(danger_ids)),
         stat("Approaching", len(approaching), section=2),
         stat("TTC", ttc_text, "badge", ttc_color, only_if=threat is not None),
+        stat("Next Contact", f'{nxt["track_id"]} {nxt["t_cpa"]:.0f}s, miss {nxt["miss"]:.1f}m' if nxt else "", section=2, only_if=nxt is not None),
 
         stat("People Detected", len(people), section=2),
         stat("Min Distance", f"{min(dists):.1f} m" if dists else "--", section=2),
@@ -234,8 +231,6 @@ def remove_ids_from_history(now):
             del history[tid]
             zone_state.pop(tid, None)
             threat_state.pop(tid, None)
-            monitor_state.pop(tid, None)
-            closing_hist.pop(tid, None)
             removed.append(tid)
     return removed
 
@@ -290,11 +285,12 @@ def get_cpa(track_id, now, window=1.2):
     vz, pz = np.polyfit(t, z, 1)
 
     vv = vx * vx + vz * vz
-    if vv < 0.25:                    # relative speed under 0.5 m/s: not closing
+    floor = min_closing(math.hypot(px, pz))
+    if vv < floor * floor:
         return None, None
 
-    t_cpa = -(px * vx + pz * vz) / vv    # time of closest approach
-    if t_cpa <= 0 or t_cpa > 6.0:                        # already past / moving away
+    t_cpa = -(px * vx + pz * vz) / vv
+    if t_cpa <= 0 or t_cpa > 15.0:          # was 6.0
         return None, None
 
     miss = math.hypot(px + vx * t_cpa, pz + vz * t_cpa)
@@ -302,7 +298,9 @@ def get_cpa(track_id, now, window=1.2):
 
 threat_state = {}   # track_id -> {"streak", "until", "t_cpa", "t_ref"}
 
-def shrinking(p, now, span=1.0, min_drop=0.4):
+def shrinking(p, now, span=1.0, min_drop=None):
+    if min_drop is None:
+        min_drop = 0.8 * min_closing(p["distance"]) * span
     pts = [e["distance"] for e in history[p["track_id"]] if now - e["t"] <= span]
     if len(pts) < 8:
         return False
@@ -324,44 +322,10 @@ def update_threat(track_id, p, now):
     p["threat"] = now < s["until"]
     p["t_cpa_shown"] = max(0.0, s["t_cpa"] - (now - s["t_ref"])) if p["threat"] else None
 
-#-----Early Monitoring----@
-EARLY_MONITOR_ENABLED = True
-monitor_state = {}   # track_id -> (last logged label, time)
-early_events = []    # for logs / the LLM
-closing_hist = {}    # track_id -> [(t, closing), ...] last 4 s
 
-def run_early_monitor(people, now):
-    if not EARLY_MONITOR_ENABLED:
-        return
-    for p in people:
-        tid, c = p["track_id"], p.get("closing")
-        if (c is None or p["feet_cut"] or not (3 < p["forward_depth"] < 12)
-                or abs(p["horizontal_m"]) > 1.2):
-            continue
-
-        buf = closing_hist.setdefault(tid, [])
-        buf.append((now, c))
-        buf[:] = [x for x in buf if now - x[0] <= 4.0]
-
-        before = [v for t, v in buf if 1.0 <= now - t <= 3.5]
-        recent = [v for t, v in buf if now - t <= 0.5]
-        if len(before) < 8 or len(recent) < 4:
-            continue
-        if np.std(before) > 0.5:             # wasn't steady before, can't call it a change
-            continue
-
-        jump = float(np.median(recent) - np.median(before))
-        if jump >= 1.8:      label = "WALKING_TOWARD"
-        elif jump >= 0.7:    label = "STOPPED_OR_SLOWED"
-        else:                continue
-
-        last = monitor_state.get(tid)
-        if last and last[0] == label and now - last[1] < 3.0:
-            continue                          # same event, don't re-log for 3 s
-        monitor_state[tid] = (label, now)
-        early_events.append({"t": round(now, 1), "id": tid, "label": label,
-                             "dist": round(p["distance"], 1), "side": p["side"]})
-        print(f"EARLY id={tid} {label} dist={p['distance']:.1f} jump={jump:.1f}")
+def min_closing(dist):
+    # smallest closing speed we trust: 0.1 m/s when close, up to 0.5 m/s when far
+    return min(0.5, max(0.1, 0.01 * dist * dist))
 
 
 #   miss        	What it means	        Real-life picture

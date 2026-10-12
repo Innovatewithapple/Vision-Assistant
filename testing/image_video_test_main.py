@@ -68,30 +68,76 @@ focal_length_x = cam_params["focal_length_pixels"]
 cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
 frame_count = 0
 
+writer = None
+recording_path = "pedestrian_demo.mp4"
 # ------------------------------------------------------------
 # LIVE VIDEO TRACKING LOOP
 # ------------------------------------------------------------
 while True:
     ok, frame = cap.read()
+
     if not ok:  # End of video file reached
         break
 
     frame_count += 1
     video_time = frame_count / video_fps
 
-    # Run your tracking segmentation model on the live frame
-    boxes, labels, scores, masks, track_ids, class_names = segmentor.segment(frame=frame)
-    # ------------------------------------------------------------
-    # DISPLAY (press q to quit)
-    # ------------------------------------------------------------
-    frame = Draw_Segment_Around(boxes, labels, class_names, frame, track_ids, scores, masks,distance_estimator,center_x,focal_length_x,video_time)
+    # Run tracking and segmentation
+    boxes, labels, scores, masks, track_ids, class_names = (
+        segmentor.segment(frame=frame)
+    )
+
+    # Draw segmentation, tracking IDs, distances, and State Overview
+    frame = Draw_Segment_Around(
+        boxes,
+        labels,
+        class_names,
+        frame,
+        track_ids,
+        scores,
+        masks,
+        distance_estimator,
+        center_x,
+        focal_length_x,
+        video_time
+    )
+
+    # Initialize automatic recording on the first processed frame
+    if writer is None:
+        frame_height, frame_width = frame.shape[:2]
+
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+
+        writer = cv2.VideoWriter(
+            recording_path,
+            fourcc,
+            video_fps,
+            (frame_width, frame_height)
+        )
+
+        if not writer.isOpened():
+            raise RuntimeError("Could not initialize video recording.")
+
+    # Save the processed frame
+    writer.write(frame)
+
+    # Display the processed frame
     cv2.imshow("Video Detection", frame)
 
     key = cv2.waitKey(1) & 0xFF
+
     if key == ord("q"):
         break
+
     if key == ord("s"):
         toggle_panel()
 
+# Release resources after the loop ends
 cap.release()
+
+if writer is not None:
+    writer.release()
+
 cv2.destroyAllWindows()
+
+print(f"Recording saved to: {recording_path}")
